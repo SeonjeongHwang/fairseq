@@ -105,18 +105,13 @@ class MultiprocessingEncoder(object):
         global bpe
         return bpe.decode(tokens)
 
-    def encode_lines(self, lines):
+    def encode_line(self, line):
         """
-        Encode a set of lines. All lines will be encoded together.
-        """
-        enc_lines = []
-        for line in lines:
-            line = line.strip()
-            if len(line) == 0 and not self.args.keep_empty:
-                return ["EMPTY", None]
-            tokens = self.encode(line)
-            enc_lines.append(" ".join(tokens))
-        return ["PASS", enc_lines]
+        Encode a set of line.
+        """     
+        line = line.strip()
+        tokens, word2token, token2word = self.encode(line)
+        return "PASS", tokens, word2token, token2word
 
     def decode_lines(self, lines):
         dec_lines = []
