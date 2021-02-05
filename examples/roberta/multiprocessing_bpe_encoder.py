@@ -89,12 +89,13 @@ def main():
 
 
 class MultiprocessingEncoder(object):
-    def __init__(self, args):
-        self.args = args
-
+    def __init__(self, encoder, vocab):
+        self.encoder_json = encoder
+        self.vocab_bpe = vocab
+        
     def initializer(self):
         global bpe
-        bpe = get_encoder(self.args.encoder_json, self.args.vocab_bpe)
+        bpe = get_encoder(self.encoder_json, self.vocab_bpe)
 
     def encode(self, line):
         global bpe
@@ -111,7 +112,7 @@ class MultiprocessingEncoder(object):
         """     
         line = line.strip()
         tokens, word2token, token2word = self.encode(line)
-        return "PASS", tokens, word2token, token2word
+        return tokens, word2token, token2word
 
     def decode_lines(self, lines):
         dec_lines = []
