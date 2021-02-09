@@ -113,46 +113,29 @@ class Encoder:
 
     #단어와 token의 matching 여부를 파악하기 위함
     def encode(self, text):
-        orig_words = text.split(" ")
-        word2token_idx = []
-        token2word_idx = []
+        orig_text = text
+        char2token = []
+        token2startchar = []
+        token2endchar = []
         bpe_tokens = []
         
-        word_idx = 0
-        first_token = True
-        for idx, token in enumerate(self.re.findall(self.pat, text)):
-            orig_token = token
-            token = token.strip()
-            if orig_words[0].startswith(token):
-                if orig_words[0]==token:
-                    if first_token: #orig: banana, token: banana
-                        orig_words = orig_words[1:]
-                        word2token_idx.append(idx)
-                        token2word_idx.append(word_idx)
-                        word_idx += 1
-                        first_token = True
-                    else: #orig: nana, token: nana
-                        orig_words = orig_words[1:]
-                        token2word_idx.append(word_idx)
-                        word_idx += 1
-                        first_token = True
-                else:
-                    if first_token: #orig: banana, token: ba
-                        orig_words[0] = orig_words[0][len(token):]
-                        word2token_idx.append(idx)
-                        token2word_idx.append(word_idx)
-                        first_token = False
-                    else: #orig: nana, token: na
-                        orig_words[0] = orig_words[0][len(token):]
-                        token2word_idx.append(word_idx)
-                        first_token = False
-            token = orig_token
+        char_idx = 0
+        for token_idx, token in enumerate(self.re.findall(self.pat, text)):
+            if orig_text.startswith(token):
+                token2startchar.append(char_idx)
+                for c in token:
+                    if orig_text[char_idx] == c:
+                        char2token.append(token_idx)
+                        char_idx += 1
+                    token2endchar.append(char_idx-1)
+                    
             token = "".join(self.byte_encoder[b] for b in token.encode("utf-8"))
             bpe_tokens.extend(
                 self.encoder[bpe_token] for bpe_token in self.bpe(token).split(" ")
             )
-        assert len(bpe_tokens)==len(token2word_idx)
-        return bpe_tokens, word2token_idx, token2word_idx
+        assert len(bpe_tokens)==len(token2startchar) and len(bpe_tokens)==len(token2endchar)
+        assert len(text)==len(char2token)
+        return bpe_tokens, char2token, token2startchar, token2endchar
 
     def decode(self, tokens):
         text = "".join([self.decoder.get(token, token) for token in tokens])

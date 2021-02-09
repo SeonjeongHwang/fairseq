@@ -84,7 +84,7 @@ class CommonsenseQATask(LegacyFairseqTask):
         def binarize(s, append_bos=False):
             if self.bpe is not None:
                 s = self.bpe.encode(s)
-            tokens = self.vocab.encode_line(
+            tokens = self.vocab.encode_line( ### token들의 dictionary index : IntTensor -> long()
                 s,
                 append_eos=True,
                 add_if_not_exist=False,
