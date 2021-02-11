@@ -210,7 +210,7 @@ class SentenceRankingTask(LegacyFairseqTask):
     def build_model(self, args):
         from fairseq import models
 
-        model = models.build_model(args, self)
+        model = models.build_model(args, self) #RobertaEncoder
 
         model.register_classification_head(
             getattr(args, "ranking_head_name", "sentence_classification_head"),

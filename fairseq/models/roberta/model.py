@@ -203,7 +203,7 @@ class RobertaModel(FairseqEncoderModel):
 
     def register_classification_head(
         self, name, num_classes=None, inner_dim=None, **kwargs
-    ):
+    ): #name: "sentence_classification_head"
         """Register a classification head."""
         if name in self.classification_heads:
             prev_num_classes = self.classification_heads[name].out_proj.out_features
@@ -215,16 +215,19 @@ class RobertaModel(FairseqEncoderModel):
                         name, num_classes, prev_num_classes, inner_dim, prev_inner_dim
                     )
                 )
-        self.classification_heads[name] = RobertaClassificationHead(
-            input_dim=self.args.encoder_embed_dim,
-            inner_dim=inner_dim or self.args.encoder_embed_dim,
-            num_classes=num_classes,
-            activation_fn=self.args.pooler_activation_fn,
-            pooler_dropout=self.args.pooler_dropout,
-            q_noise=self.args.quant_noise_pq,
-            qn_block_size=self.args.quant_noise_pq_block_size,
-            do_spectral_norm=self.args.spectral_norm_classification_head,
-        )
+        if name == "coqa":
+            self.classification_heads[name] = RobertaCoqaHead()
+        else:
+            self.classification_heads[name] = RobertaClassificationHead(
+                input_dim=self.args.encoder_embed_dim,
+                inner_dim=inner_dim or self.args.encoder_embed_dim,
+                num_classes=num_classes,
+                activation_fn=self.args.pooler_activation_fn,
+                pooler_dropout=self.args.pooler_dropout,
+                q_noise=self.args.quant_noise_pq,
+                qn_block_size=self.args.quant_noise_pq_block_size,
+                do_spectral_norm=self.args.spectral_norm_classification_head,
+            )
 
     @property
     def supported_targets(self):
