@@ -26,7 +26,7 @@ def get_CoQA_features(args, encoder, Train_mode=True):
         num_turn=args.num_turns)
     
     example_processor = CoQAExampleProcessor(
-        max_seq_length=args.max_seq_length,
+        max_seq_length=args.max_positions,
         max_query_length=args.max_query_length,
         doc_stride=args.doc_stride,
         encoder=bpe_encoder)

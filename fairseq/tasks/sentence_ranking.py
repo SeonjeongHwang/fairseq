@@ -126,8 +126,8 @@ class SentenceRankingTask(LegacyFairseqTask):
         if self.args.separator_token is not None:
             input0 = PrependTokenDataset(input0, self.args.separator_token)
 
-        src_tokens = []
-        for input_option in input_options:
+        src_tokens = [] #input1~5까지
+        for input_option in input_options: #input_option: 한가지 input option의 전체 line들
             if self.args.init_token is not None:
                 input_option = PrependTokenDataset(input_option, self.args.init_token)
             if self.args.max_option_length is not None:

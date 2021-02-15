@@ -7,11 +7,13 @@ import logging
 import os
 
 import numpy as np
+import torch
 from fairseq import utils
 from fairseq.data import (
     ConcatSentencesDataset,
     Dictionary,
     IdDataset,
+    ListDataset,
     NestedDictionaryDataset,
     NumelDataset,
     NumSamplesDataset,
@@ -33,7 +35,7 @@ from examples.roberta.preprocess_CoQA import *
 logger = logging.getLogger(__name__)
 
 
-@register_task("CoQA")
+@register_task("coqa")
 class CoQATask(LegacyFairseqTask):
     """
     Ranking task on multiple sentences.
@@ -59,10 +61,6 @@ class CoQATask(LegacyFairseqTask):
         parser.add_argument("--no-shuffle", action="store_true")
         parser.add_argument(
             "--max-query-length", type=int, help="max length of each query (histories+query)"
-        )
-
-        parser.add_argument(
-            "--max-seq-length", type=int, help="max length of each input sequence"
         )
         parser.add_argument(
             "--doc-stride", type=int, help=""
@@ -114,8 +112,9 @@ class CoQATask(LegacyFairseqTask):
         ###preprocess_coqa부르기
         features = get_CoQA_features(self.args, bpe_encoder, split=="train")
         
-        src_tokens = []
-        src_lengths = []
+        queries = []
+        contexts = [] 
+        padding_mask = []
         start_pos = []
         end_pos = []
         is_unk = []
@@ -126,61 +125,72 @@ class CoQATask(LegacyFairseqTask):
         
         for feature in features:
             #history들과 query 이어붙이고, max_query_length로 자르기(RearTruncate)
-            query = []
+            query_tokens = []
             for q, a in zip(feature.history_q, feature.history_a):
-                query.append(self.Dictionary.index("<Q>"))
-                query.extend(q)
-                query.append(self.Dictionary.index("<A>"))
-                query.extend(a)
-            query.append(self.Dictionary.index("<Q>"))
-            query.extend(feature.query)
-                            
-            query = np.array(query)
-            query = torch.IntTensor(query).long()
+                query_tokens.append(self.Q_token)
+                query_tokens.extend(q)
+                query_tokens.append(self.A_token)
+                query_tokens.extend(a)
+            query_tokens.append(self.Q_token)
+            query_tokens.extend(feature.query)
             
-            query = RearTruncateDataset(
-                    input_option, self.args.max_query_length
-                )
+            queries.append(query_tokens)
+            contexts.append(feature.para)
+            padding_mask.append(np.zeros((len(query_tokens)+len(feature.para)+3))) #CLS, SEP, SEP
             
-            ##[CLS]
-            src = PrependTokenDataset(query, self.args.init_token)
+            start_pos.append(feature.start_position)
+            end_pos.append(feature.end_position)
+            is_unk.append(feature.is_unk)
+            is_yes.append(feature.is_yes)
+            is_no.append(feature.is_no)
+            number.append(feature.number)
+            option.append(feature.option)
             
-            context = np.array(feature.para)
-            context = torch.IntTensor(context).long()
-            
-            ##[SEP]
-            context = PrependTokenDataset(context, self.args.seperator_token)
-            
-            ##+context
-            src_token = ConcatSentencesDataset(context, src)
-            ##last [SEP]
-            src = AppendTokenDataset(src, self.args.seperator_token)
-            
-            src_length = len(src)
-            
-            src_tokens.append(src)
-            src_lengths.append(src_length)
-            
-            start_pos = feature.start_position
-            end_pos = feature.end_position
-            is_unk = feature.is_unk
-            is_yes = feature.is_yes
-            is_no = feature.is_no
-            number = feature.number
-            option = feature.option
+        #query = np.array([query])
+        #query = torch.IntTensor(query).long()
+        query = ListDataset(queries, len(queries))
+
+        query = RearTruncateDataset(query, self.args.max_query_length)
+        #if len(query) > self.args.max_query_length:
+        #    query = query[-self.args.max_query_length:]
+
+
+        ##[CLS]
+        query = PrependTokenDataset(query, self.args.init_token)
+        #src = torch.cat([query.new([self.args.init_token]), query])
+        #context = torch.IntTensor(context).long()
+        context = ListDataset(contexts, len(contexts))
+
+        ##[SEP]
+        context = PrependTokenDataset(context, self.args.separator_token)
+        #context = torch.cat([context.new([self.args.separator_token]), context])
+
+        ##+context
+        src = ConcatSentencesDataset(context, query)
+        #src_token = torch.cat([context, src])
         
-        src_lengths = np.array(src_lengths)
-        src_tokens = ListDataset(src_tokens, src_lengths)
-        src_lenfths = ListDataset(src_lengths)
+        src = TruncateDataset(src, self.args.max_positions-1)
+            
+        ##last [SEP]
+        src = AppendTokenDataset(src, self.args.separator_token)
+        #src = torch.cat([src, src.new([self.args.separator_token])])
+        
+        p_mask = ListDataset(padding_mask, len(padding_mask))
+        p_mask = TruncateDataset(p_mask, self.args.max_positions)
         
         dataset = {
             "id": IdDataset(),
             "nsentences": NumSamplesDataset(),
-            "ntokens": NumelDataset(src_tokens, reduce=True),
-            "src_tokens": RightPadDataset(
-                    src_tokens,
-                    pad_idx=self.Dictionary.pad()),
-            "src_lengths": RawLabelDataset(src_lengths),
+            "ntokens": NumelDataset(src, reduce=True),
+            "net_input": {
+                "src_tokens": RightPadDataset(
+                        src,
+                        pad_idx=self.dictionary.pad()),
+                "src_lengths": NumelDataset(src, reduce=False),
+            },
+            "p_mask": RightPadDataset(
+                p_mask,
+                pad_idx=self.dictionary.pad()),
             "start_position": RawLabelDataset(start_pos),
             "end_position": RawLabelDataset(end_pos),
             "is_unk": RawLabelDataset(is_unk),
@@ -192,13 +202,13 @@ class CoQATask(LegacyFairseqTask):
 
         dataset = NestedDictionaryDataset(
             dataset,
-            sizes=[src_tokens.sizes],
+            sizes=[src.sizes],
         )
         
         with data_utils.numpy_seed(self.args.seed):
             dataset = SortDataset(
                 dataset,
-                sort_order[np.random.permutation(len(dataset))],
+                sort_order=[np.random.permutation(len(dataset))],
             )
             
         print("| Loaded {} with {} samples".format(split, len(dataset)))
