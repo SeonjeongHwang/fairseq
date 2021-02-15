@@ -26,13 +26,15 @@ from fairseq.data import (
 )
 from fairseq.data.shorten_dataset import maybe_shorten_dataset
 from fairseq.tasks import LegacyFairseqTask, register_task
+from examples.roberta.multiprocessing_bpe_encoder import *
+from examples.roberta.preprocess_CoQA import *
 
 
 logger = logging.getLogger(__name__)
 
 
-@register_task("sentence_ranking")
-class SentenceRankingTask(LegacyFairseqTask):
+@register_task("CoQA")
+class CoQATask(LegacyFairseqTask):
     """
     Ranking task on multiple sentences.
 
@@ -44,9 +46,8 @@ class SentenceRankingTask(LegacyFairseqTask):
     def add_args(parser):
         """Add task-specific arguments to the parser."""
         parser.add_argument("data", metavar="FILE", help="file prefix for data")
-        parser.add_argument(
-            "--num-classes", type=int, help="number of sentences to be ranked"
-        )
+        parser.add_argument("--encoder-json", help="path to encoder.json")
+        parser.add_argument("--vocab-bpe", type=str, help="path to vocab.bpe")
         parser.add_argument(
             "--init-token",
             type=int,
@@ -57,23 +58,19 @@ class SentenceRankingTask(LegacyFairseqTask):
         )
         parser.add_argument("--no-shuffle", action="store_true")
         parser.add_argument(
-            "--shorten-method",
-            default="none",
-            choices=["none", "truncate", "random_crop"],
-            help="if not none, shorten sequences that exceed --tokens-per-sample",
-        )
-        parser.add_argument(
-            "--shorten-data-split-list",
-            default="",
-            help="comma-separated list of dataset splits to apply shortening to, "
-            'e.g., "train,valid" (default: all dataset splits)',
-        )
-        parser.add_argument(
-            "--max-option-length", type=int, help="max length for each option"
-        )
-        parser.add_argument(
             "--max-query-length", type=int, help="max length of each query (histories+query)"
         )
+
+        parser.add_argument(
+            "--max-seq-length", type=int, help="max length of each input sequence"
+        )
+        parser.add_argument(
+            "--doc-stride", type=int, help=""
+        )
+        parser.add_argument(
+            "--num-turns", type=int, help="number of history turns"
+        )
+        
     def __init__(self, args, dictionary):
         super().__init__(args)
         self.dictionary = dictionary
@@ -87,8 +84,8 @@ class SentenceRankingTask(LegacyFairseqTask):
         """
         dictionary = Dictionary.load(filename)
         dictionary.add_symbol("<mask>")
-        self.Q_token = dictionary.add_symbol("<Q>")
-        self.A_token = dictionary.add_symbol("<A>")
+        cls.Q_token = dictionary.add_symbol("<Q>")
+        cls.A_token = dictionary.add_symbol("<A>")
         
         return dictionary
 
@@ -101,17 +98,21 @@ class SentenceRankingTask(LegacyFairseqTask):
         # load data dictionary
         data_dict = cls.load_dictionary(
             args,
-            os.path.join(args.data, "input0", "dict.txt"),
+            "dict.txt",
             source=True,
         )
-        logger.info("[input] dictionary: {} types".format(len(data_dict)))
-        return SentenceRankingTask(args, data_dict)
+        logger.info("Dictionary: {} types".format(len(data_dict)))
+        return CoQATask(args, data_dict)
 
     def load_dataset(self, split, combine=False, **kwargs):
         """Load a given dataset split (e.g., train, valid, test)."""
         
+        ###encoder 객체 생성
+        bpe_encoder = MultiprocessingEncoder(self.args.encoder_json, self.args.vocab_bpe)
+        bpe_encoder.initializer()
+        
         ###preprocess_coqa부르기
-        features = preprocess_coqa(  , , , )
+        features = get_CoQA_features(self.args, bpe_encoder, split=="train")
         
         src_tokens = []
         src_lengths = []
@@ -167,7 +168,6 @@ class SentenceRankingTask(LegacyFairseqTask):
             is_no = feature.is_no
             number = feature.number
             option = feature.option
-            
         
         src_lengths = np.array(src_lengths)
         src_tokens = ListDataset(src_tokens, src_lengths)

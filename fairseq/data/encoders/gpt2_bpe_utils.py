@@ -70,6 +70,7 @@ class Encoder:
             r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         )
 
+    ###
     def bpe(self, token):
         if token in self.cache:
             return self.cache[token]
@@ -119,20 +120,29 @@ class Encoder:
         token2endchar = []
         bpe_tokens = []
         
+        """
+        original text에서의 하나의 token이 두 개 이상 bpe token으로 표현되는 경우가 존재.
+        이 경우 char2token에서는 해당 token의 모든 char이 첫번째 bpe token의 index를 가리킴
+        token2startchar, token2endchar의 경우 모든 bpe token들이 해당 token의 첫번째, 마지막 character index를 동일하게 가리킴
+        
+        """
+        
         char_idx = 0
-        for token_idx, token in enumerate(self.re.findall(self.pat, text)):
+        for token in self.re.findall(self.pat, text):
             if orig_text.startswith(token):
-                token2startchar.append(char_idx)
-                for c in token:
-                    if orig_text[char_idx] == c:
-                        char2token.append(token_idx)
-                        char_idx += 1
-                    token2endchar.append(char_idx-1)
-                    
-            token = "".join(self.byte_encoder[b] for b in token.encode("utf-8"))
-            bpe_tokens.extend(
-                self.encoder[bpe_token] for bpe_token in self.bpe(token).split(" ")
-            )
+                orig_text = orig_text[len(token):]
+                char_start_idx = char_idx
+                char_idx += len(token)
+                char_end_idx = char_idx-1
+                before_token = token
+                token = "".join(self.byte_encoder[b] for b in token.encode("utf-8")) ####token 길이가 달라짐
+                for c in before_token:
+                    char2token.append(len(bpe_tokens))
+                for bpe_token in self.bpe(token).split(" "):
+                    token2startchar.append(char_start_idx)
+                    token2endchar.append(char_end_idx)                    
+                    bpe_tokens.append(self.encoder[bpe_token])
+            
         assert len(bpe_tokens)==len(token2startchar) and len(bpe_tokens)==len(token2endchar)
         assert len(text)==len(char2token)
         return bpe_tokens, char2token, token2startchar, token2endchar

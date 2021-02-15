@@ -137,3 +137,9 @@ wandb/
 
 ###
 data/
+models/
+
+vocab.bpe
+dict.txt
+encoder.json
+
