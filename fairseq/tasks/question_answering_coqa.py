@@ -82,16 +82,16 @@ class CoQATask(LegacyFairseqTask):
         """
         dictionary = Dictionary.load(filename)
         dictionary.add_symbol("<mask>")
-        cls.Q_token = dictionary.add_symbol("<Q>")
-        cls.A_token = dictionary.add_symbol("<A>")
+        #cls.Q_token = dictionary.add_symbol("<Q>")
+        #cls.A_token = dictionary.add_symbol("<A>")
         
         return dictionary
 
     @classmethod
     def setup_task(cls, args, **kwargs):
         assert (
-            args.criterion == "sentence_ranking"
-        ), "Must set --criterion=sentence_ranking"
+            args.criterion == "coqa"
+        ), "Must set --criterion=coqa"
 
         # load data dictionary
         data_dict = cls.load_dictionary(
@@ -109,11 +109,34 @@ class CoQATask(LegacyFairseqTask):
         bpe_encoder = MultiprocessingEncoder(self.args.encoder_json, self.args.vocab_bpe)
         bpe_encoder.initializer()
         
+        """
+        feature = InputFeatures(
+                unique_id=self.unique_id,
+                qas_id=example.qas_id,
+                doc_idx=doc_idx,
+                token2char_raw_start_index=doc_token2char_raw_start_index,
+                token2char_raw_end_index=doc_token2char_raw_end_index,
+                token2doc_index=doc_token2doc_index,
+                history_q = history_q_tokens,
+                history_a = history_a_tokens,
+                query = query_tokens,
+                para=span_tokens,
+                para_length=doc_para_length,
+                start_position=start_position,
+                end_position=end_position,
+                is_unk=is_unk,
+                is_yes=is_yes,
+                is_no=is_no,
+                number=number,
+                option=option)
+        """
+        
         ###preprocess_coqa부르기
         features = get_CoQA_features(self.args, bpe_encoder, split=="train")
         
-        queries = []
-        contexts = [] 
+        qas_idx = []
+        src_tokens = []
+        src_lengths = []
         padding_mask = []
         start_pos = []
         end_pos = []
@@ -127,17 +150,31 @@ class CoQATask(LegacyFairseqTask):
             #history들과 query 이어붙이고, max_query_length로 자르기(RearTruncate)
             query_tokens = []
             for q, a in zip(feature.history_q, feature.history_a):
-                query_tokens.append(self.Q_token)
+                #query_tokens.append(self.Q_token)
                 query_tokens.extend(q)
-                query_tokens.append(self.A_token)
+                #query_tokens.append(self.A_token)
                 query_tokens.extend(a)
-            query_tokens.append(self.Q_token)
+            #query_tokens.append(self.Q_token)
             query_tokens.extend(feature.query)
             
-            queries.append(query_tokens)
-            contexts.append(feature.para)
-            padding_mask.append(np.zeros((len(query_tokens)+len(feature.para)+3))) #CLS, SEP, SEP
+            src = query_tokens
+            if len(src) > self.args.max_query_length:
+                src = src[-self.args.max_query_length:]
+                
+                
+            src = [self.args.init_token]+src
+            src.append(self.args.separator_token)
+            src.extend(feature.para)
+            if len(src) > self.args.max_positions:
+                src = src[:self.args.max_query_length]
+            src.append(self.args.separator_token)
+            src = torch.IntTensor(src).long()
+            p_mask = torch.IntTensor(np.zeros((len(src)))).long()
             
+            src_tokens.append(src)
+            src_lengths.append(len(src))
+            padding_mask.append(p_mask) #CLS, SEP, SEP
+            qas_idx.append(feature.qas_id)
             start_pos.append(feature.start_position)
             end_pos.append(feature.end_position)
             is_unk.append(feature.is_unk)
@@ -145,52 +182,55 @@ class CoQATask(LegacyFairseqTask):
             is_no.append(feature.is_no)
             number.append(feature.number)
             option.append(feature.option)
-            
-        #query = np.array([query])
+        
+        src_tokens = ListDataset(src_tokens, src_lengths)
+        src_lengths = ListDataset(src_lengths)
         #query = torch.IntTensor(query).long()
-        query = ListDataset(queries, len(queries))
+        #query = ListDataset(queries, len(queries))
 
-        query = RearTruncateDataset(query, self.args.max_query_length)
+        #query = RearTruncateDataset(query, self.args.max_query_length)
         #if len(query) > self.args.max_query_length:
         #    query = query[-self.args.max_query_length:]
 
 
         ##[CLS]
-        query = PrependTokenDataset(query, self.args.init_token)
+        #query = PrependTokenDataset(query, self.args.init_token)
         #src = torch.cat([query.new([self.args.init_token]), query])
         #context = torch.IntTensor(context).long()
-        context = ListDataset(contexts, len(contexts))
+        #context = ListDataset(contexts, len(contexts))
 
         ##[SEP]
-        context = PrependTokenDataset(context, self.args.separator_token)
+        #context = PrependTokenDataset(context, self.args.separator_token)
         #context = torch.cat([context.new([self.args.separator_token]), context])
 
         ##+context
-        src = ConcatSentencesDataset(context, query)
+        #src = ConcatSentencesDataset(context, query)
         #src_token = torch.cat([context, src])
         
-        src = TruncateDataset(src, self.args.max_positions-1)
+        #src = TruncateDataset(src, self.args.max_positions-1)
             
         ##last [SEP]
-        src = AppendTokenDataset(src, self.args.separator_token)
+        #src = AppendTokenDataset(src, self.args.separator_token)
         #src = torch.cat([src, src.new([self.args.separator_token])])
         
-        p_mask = ListDataset(padding_mask, len(padding_mask))
-        p_mask = TruncateDataset(p_mask, self.args.max_positions)
+        #p_mask = ListDataset(padding_mask, len(padding_mask))
+        #p_mask = TruncateDataset(p_mask)
         
         dataset = {
             "id": IdDataset(),
             "nsentences": NumSamplesDataset(),
-            "ntokens": NumelDataset(src, reduce=True),
+            "ntokens": NumelDataset(src_tokens, reduce=True),
+            #"qas_id": RawLabelDataset(qas_idx),
             "net_input": {
                 "src_tokens": RightPadDataset(
-                        src,
+                        src_tokens,
                         pad_idx=self.dictionary.pad()),
-                "src_lengths": NumelDataset(src, reduce=False),
+                "src_lengths": src_lengths,
+                "start_position": RawLabelDataset(start_pos),
+                "p_mask": RightPadDataset(
+                        padding_mask,
+                        pad_idx=self.dictionary.pad()),
             },
-            "p_mask": RightPadDataset(
-                p_mask,
-                pad_idx=self.dictionary.pad()),
             "start_position": RawLabelDataset(start_pos),
             "end_position": RawLabelDataset(end_pos),
             "is_unk": RawLabelDataset(is_unk),
@@ -202,7 +242,7 @@ class CoQATask(LegacyFairseqTask):
 
         dataset = NestedDictionaryDataset(
             dataset,
-            sizes=[src.sizes],
+            sizes=[np.maximum.reduce([src_tokens.sizes])],
         )
         
         with data_utils.numpy_seed(self.args.seed):
@@ -222,9 +262,8 @@ class CoQATask(LegacyFairseqTask):
 
         model = models.build_model(args, self) #RobertaEncoder
 
-        model.register_classification_head(
-            getattr(args, "ranking_head_name", "sentence_classification_head"),
-            num_classes=1,
+        model.register_classification_head( ########################################################################
+            getattr(args, "ranking_head_name", "coqa")
         )
 
         return model

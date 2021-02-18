@@ -10,6 +10,9 @@ import torch.nn.functional as F
 from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 
+MAX_FLOAT = 1e30
+MIN_FLOAT = -1e30
+
 
 @register_criterion("coqa")
 class CoqaCriterion(FairseqCriterion):
@@ -31,9 +34,23 @@ class CoqaCriterion(FairseqCriterion):
         parser.add_argument('--save-predictions', metavar='FILE',
                             help='file to save predictions to')
         parser.add_argument('--ranking-head-name',
-                            default='coqa_head',
+                            default='coqa',
                             help='name of the classification head to use')
+        parser.add_argument('--start-n-top',
+                            default=5,
+                            help='Beam size for span start')
+        parser.add_argument('--end-n-top',
+                            default=5,
+                            help='Beam size for span end')
         # fmt: on
+        
+    def get_masked_data(self, data, mask):
+        print(data)
+        t1 = data * mask
+        print(mask)
+        print(t1)
+        t2 = MIN_FLOAT * (1-mask)
+        return t1+t2
 
     def forward(self, model, sample, reduce=True):
         """Compute ranking loss for the given sample.
@@ -43,45 +60,160 @@ class CoqaCriterion(FairseqCriterion):
         2) the sample size, which is used as the denominator for the gradient
         3) logging outputs to display while training
         """
+        
+        def get_masked_data(data, mask):
+            return data * (1-mask) + MIN_FLOAT * mask
+        
+        def compute_loss(label, predict, predict_mask, label_smoothing=0.0):
+            #masked_predict = get_masked_data(predict, predict_mask)
+            masked_predict = predict #[b,l]
+            
+            if label_smoothing > 1e-10:
+                onehot_label = F.one_hot(label, masked_predict.size(-1))
+                onehot_label = (onehot_label * (1-label_smoothing) +
+                                label_smoothing / masked_predict.size(-1).FloatTensor()) * predict_mask
+                
+                log_likelihood = F.log_softmax(masked_predict, dim=-1)
+                loss = - (onehot_label*log_likelihood).sum(-1)
+            else:
+                CEL = torch.nn.CrossEntropyLoss()
+                loss = CEL(masked_predict, label)
+                
+            return loss
+        
         assert (
             hasattr(model, "classification_heads")
             and self.ranking_head_name in model.classification_heads
-        ), "model must provide sentence ranking head for --criterion=sentence_ranking"
+        ), "model must provide sentence ranking head for --criterion=coqa"
 
-        """
-        1) start
-        2) end
-        4) unk
-        5) yes
-        6) no
-        7) num
-        8) opt
-        
-        model에서 각 classification을 거치고 logits까지 뽑음
-        여기서 logits들을 이용해 예측값과 loss를 계산
-        logits = {start_result, end_result, unk_result, yes_result, no_result, num_result, opt_result}
-        
-        """
         logits, _ = model(
-            **sample["net_input"],
+            sample["net_input"],
             classification_head_name=self.ranking_head_name,
         )
         
+        p_mask = sample["net_input"]["p_mask"]
         
-
-        logits = torch.cat(scores, dim=1)
-        sample_size = logits.size(0)
-
-        if "target" in sample:
-            targets = model.get_targets(sample, [logits]).view(-1)
-            lprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
-            loss = F.nll_loss(lprobs, targets, reduction="sum")
+        ##start
+        start_result = logits["start_result"]
+        #start_result_mask = 1-p_mask
+        
+        start_result = torch.squeeze(start_result, dim=-1)
+        #start_result = self.get_masked_data(start_result, start_result_mask)
+        start_prob = F.softmax(start_result, dim=-1)
+        
+        if not self.training:
+            start_top_prob, start_top_index = torch.topk(start_prob, k=args.start_n_top)
+            preds["start_prob"] = start_top_prob
+            preds["start_index"] = start_top_index
+            
+        ##end
+        end_result = logits["end_result"]
+        if self.training:
+            #end_result_mask = 1-p_mask
+            
+            end_result = torch.squeeze(end_result, dim=-1)
+            #end_result = self.get_masked_data(end_result, end_result_mask)
+            end_prob = F.softmax(end_result, dim=-1)
         else:
-            targets = None
+            #end_result_mask = torch.unsqueeze(1-p_mask, dim=1)
+            #end_result_mask = torch.tile(end_result_mask, (1, self.args.start_n_top, 1))
+            
+            end_result = torch.transpose(torch.squeeze(end_result, dim=-1), 1, 2)
+            #end_result = self.get_masked_data(end_result, end_result_mask)
+            end_prob = F.softmax(end_result, dim=-1)
+            
+            end_top_prob, end_top_index = torch.topk(end_prob, k=self.args.start_n_top)
+            preds["end_prob"] = end_top_prob
+            preds["end_index"] = end_top_index
+            
+        ##unk
+        unk_result = logits["unk_result"]
+        #unk_result_mask = torch.max(1-p_mask, dim=-1)
+        
+        unk_result = torch.squeeze(unk_result, dim=-1)
+        #unk_result = self.get_masked_data(unk_result, unk_result_mask)
+        unk_prob = F.sigmoid(unk_result)
+        
+        ##yes
+        yes_result = logits["yes_result"]
+        #yes_result_mask = torch.max(1-p_mask, dim=-1)
+        
+        yes_result = torch.squeeze(yes_result, dim=-1)
+        #yes_result = self.get_masked_data(yes_result, yes_result_mask)
+        yes_prob = F.sigmoid(yes_result)
+        
+        ##no
+        no_result = logits["no_result"]
+        #no_result_mask = torch.max(1-p_mask, dim=-1)
+        
+        no_result = torch.squeeze(no_result, dim=-1)
+        #no_result = self.get_masked_data(no_result, no_result_mask)
+        no_prob = F.sigmoid(no_result)
+            
+        ##num
+        num_result = logits["num_result"]
+        #num_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True)
+        
+        #num_result = self.get_masked_data(num_result, num_result_mask)
+        num_probs = F.softmax(num_result, dim=-1)
+        
+        ##opt
+        opt_result = logits["opt_result"]
+        #opt_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True)
+        
+        #opt_result = self.get_masked_data(opt_result, opt_result_mask)
+        opt_probs = F.softmax(opt_result, dim=-1)
+        
+        if self.training:
+            start_label = sample["start_position"]
+            start_loss = compute_loss(start_label, start_result, 1-p_mask)
+            end_label = sample["end_position"]
+            end_loss = compute_loss(end_label, end_result, 1-p_mask)
+            loss = torch.mean(start_loss + end_loss)
+            
+            unk_label = sample["is_unk"]
+            unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
+            loss += torch.mean(unk_loss)
+            
+            yes_label = sample["is_yes"]
+            yes_loss = F.binary_cross_entropy_with_logits(yes_result, yes_label.half())
+            loss += torch.mean(yes_loss)
+            
+            no_label = sample["is_no"]
+            no_loss = F.binary_cross_entropy_with_logits(no_result, no_label.half())
+            loss += torch.mean(no_loss)
+            
+            num_label = sample["number"]
+            num_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True)
+            num_loss = compute_loss(num_label, num_result, num_result_mask)
+            loss += torch.mean(num_loss)
+            
+            opt_label = sample["option"]
+            opt_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True)
+            opt_loss = compute_loss(opt_label, opt_result, opt_result_mask)
+            loss += torch.mean(opt_loss)
+            
+        else:
             loss = torch.tensor(0.0, requires_grad=True)
+            targets = preds
 
         if self.prediction_h is not None:
-            preds = logits.argmax(dim=1)
+            features = []
+            for id in sample["id"]:
+                feature = {}
+                feature["id"] = id
+                feature["qas_id"] = sample["qas_id"][id]
+                feature["start_position"] = sample["start_position"][id]
+                feature["end_position"] = sample["end_position"][id]
+                
+            
+            qas_id_to_result = {}
+            for id, qas_id in zip(preds["id"], preds["qas_id"]):
+                if qas_id not in qas_id_to_result:
+                    qas_id_to_result[qas_id] = []
+                qas_id_to_result[qas_id].append(id)
+                
+            
             for i, (id, pred) in enumerate(zip(sample["id"].tolist(), preds.tolist())):
                 if targets is not None:
                     label = targets[i].item()

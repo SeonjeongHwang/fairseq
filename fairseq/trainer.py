@@ -549,7 +549,7 @@ class Trainer(object):
                     return contextlib.ExitStack()  # dummy contextmanager
 
             try:
-                with maybe_no_sync():
+                with maybe_no_sync(): ######################################################
                     # forward and backward
                     loss, sample_size_i, logging_output = self.task.train_step(
                         sample=sample,

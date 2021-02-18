@@ -24,6 +24,9 @@ from fairseq.modules.transformer_sentence_encoder import init_bert_params
 
 from .hub_interface import RobertaHubInterface
 
+MAX_FLOAT = 1e30
+MIN_FLOAT = -1e30
+
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +181,7 @@ class RobertaModel(FairseqEncoderModel):
 
     def forward(
         self,
-        src_tokens,
+        net_input,
         features_only=False,
         return_all_hiddens=False,
         classification_head_name=None,
@@ -186,10 +189,17 @@ class RobertaModel(FairseqEncoderModel):
     ):
         if classification_head_name is not None:
             features_only = True
+            
+        src_tokens = net_input["src_tokens"]
+        start_positions = net_input["start_position"]
+        p_mask = net_input["p_mask"]
 
         x, extra = self.encoder(src_tokens, features_only, return_all_hiddens, **kwargs)
+        
+        if classification_head_name == "coqa":
+            x = self.classification_heads[classification_head_name](x, start_positions, p_mask)
 
-        if classification_head_name is not None:
+        elif classification_head_name is not None:
             x = self.classification_heads[classification_head_name](x)
         return x, extra
 
@@ -216,7 +226,11 @@ class RobertaModel(FairseqEncoderModel):
                     )
                 )
         if name == "coqa":
-            self.classification_heads[name] = RobertaCoqaHead()
+            self.classification_heads[name] = RobertaCoqaHead(
+                hidden_dim = self.args.encoder_embed_dim,
+                dropout = self.args.dropout,
+                seq_len = self.args.max_positions,
+                start_n_top = self.args.start_n_top)
         else:
             self.classification_heads[name] = RobertaClassificationHead(
                 input_dim=self.args.encoder_embed_dim,
@@ -358,7 +372,7 @@ class RobertaClassificationHead(nn.Module):
 
     def __init__(
         self,
-        input_dim,
+        hidden_dim,
         inner_dim,
         num_classes,
         activation_fn,
@@ -389,9 +403,127 @@ class RobertaClassificationHead(nn.Module):
         x = self.dropout(x)
         x = self.out_proj(x)
         return x
+    
+class RobertaCoqaHead(nn.Module):
+    
+    def __init__( self,
+        hidden_dim,
+        dropout,
+        seq_len,
+        start_n_top):
+        super().__init__()
+        self.dropout = dropout
+        self.seq_len = seq_len
+        self.start_n_top = start_n_top
+        
+        self.start_dense = nn.Linear(hidden_dim, 1)
+        
+        self.end_denseT_1 = nn.Linear(hidden_dim*2, hidden_dim)
+        self.end_activation_fnT = nn.Tanh()
+        self.end_normT = nn.LayerNorm([hidden_dim])
+        self.end_denseT_2 = nn.Linear(hidden_dim, 1)
+        
+        self.end_denseE_1 = nn.Linear(hidden_dim*2, hidden_dim)
+        self.end_activation_fnE = nn.Tanh()
+        self.end_normE = nn.LayerNorm([hidden_dim])
+        self.end_denseE_2 = nn.Linear(hidden_dim, 1)
+        
+        self.ans_dense = nn.Linear(hidden_dim*2, hidden_dim)
+        self.ans_activation_fn = nn.Tanh()
+        self.ans_dropout = nn.Dropout(p=dropout)
+        
+        self.unk_dense = nn.Linear(hidden_dim, 1)
+        self.yes_dense = nn.Linear(hidden_dim, 1)
+        self.no_dense = nn.Linear(hidden_dim, 1)
+        
+        self.num_dense = nn.Linear(hidden_dim, 12)
+        self.opt_dense = nn.Linear(hidden_dim, 3)
+        
+    def get_masked_data(self, data, mask):
+        return data * mask + MIN_FLOAT * (1-mask)
+    
+    def tile(self, data, size):
+        for dim in range(-1, -1*len(size)-1, -1):
+            multiple_num = size[dim]
+            ori_data = data
+            for _ in range(multiple_num-1):
+                data = torch.cat([data, ori_data], dim=dim)
+        return data
+    
+    def forward(self, features, start_positions, p_mask, **kwargs):
+        cls_result = features[:, 0, :]
+        seq_result = features
+        self.seq_len = seq_result.size()[1]
+        
+        ##start
+        start_result = seq_result
+        #start_result_mask = 1-p_mask
+        
+        start_result = self.start_dense(start_result)
+        start_logit = start_result
+        
+        start_result = torch.squeeze(start_result, dim=-1)
+        #start_result = self.get_masked_data(start_result, start_result_mask)
+        start_prob = F.softmax(start_result, dim=-1)
+        
+        if not self.training:
+            start_top_prob, start_top_index = torch.topk(start_prob, k=self.start_n_top)
+        
+        ##end
+        if self.training:
+            start_index = F.one_hot(torch.unsqueeze(start_positions, dim=-1), self.seq_len).half()    #[b] -> [b,1] -> [b,1,l]
+            feat_result = torch.matmul(start_index, seq_result)                                #[b,1,l]*[b,l,h] -> [b,1,h]
+            feat_result = self.tile(feat_result, [1, self.seq_len, 1])
 
+            end_result = torch.cat([seq_result, feat_result], -1)
+            
+            end_result = self.end_denseT_1(end_result)
+            end_result = self.end_activation_fnT(end_result)
+            end_result = self.end_normT(end_result)
+            end_result = self.end_denseT_2(end_result)
+        else:
+            start_index = F.one_hot(start_top_index, self.seq_len)
+            feat_result = torch.matmul(start_index, seq_result)
+            feat_result = torch.unsqueeze(feat_result, dim=1)
+            feat_result = self.tile(feat_result, [1, self.seq_len, 1, 1])
+            
+            end_result = torch.unsqueeze(seq_result, dim=-2)
+            end_result = self.tile(end_result, [1, 1, self.start_n_top, 1])
+            end_result = torch.cat([end_result, feat_result], dim=-1)
+            
+            end_result = self.end_denseE_1(end_result)
+            end_result = self.activation_fnE(end_result)
+            end_result = self.end_normE(end_result)
+            end_result = self.end_denseE_1(end_result)
+            
+        ##answer
+        answer_feat_result = torch.matmul(torch.unsqueeze(start_prob, dim=1).half(), seq_result) #[b,1,h]
+        answer_output_result = torch.unsqueeze(cls_result, dim=1) #[b,1,h]
+        
+        answer_result = torch.cat([answer_feat_result, answer_output_result], dim=-1)
+        answer_result = torch.squeeze(answer_result, dim=1)
+        
+        answer_result = self.ans_dense(answer_result)
+        answer_result = self.ans_activation_fn(answer_result)
+        answer_result = self.ans_dropout(answer_result)
+        
+        unk_result = self.unk_dense(answer_result)
+        yes_result = self.yes_dense(answer_result)
+        no_result = self.no_dense(answer_result)
+        num_result = self.num_dense(answer_result)
+        opt_result = self.opt_dense(answer_result)
+        
+        logits = {"start_result": start_logit,
+                  "end_result": end_result,
+                  "unk_result": unk_result,
+                  "yes_result": yes_result,
+                  "no_result": no_result,
+                  "num_result": num_result,
+                  "opt_result": opt_result}
+        
+        return logits 
 
-class RobertaEncoder(FairseqEncoder):
+class RobertaEncoder(FairseqEncoder): ################################
     """RoBERTa encoder."""
 
     def __init__(self, args, dictionary):

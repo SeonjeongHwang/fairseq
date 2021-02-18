@@ -624,9 +624,9 @@ class CoQAExampleProcessor(object):
             
             start_position = None
             end_position = None
-            is_unk = (example.answer_type == "unknown" or example.is_skipped)
-            is_yes = (example.answer_type == "yes")
-            is_no = (example.answer_type == "no")
+            is_unk = 1 if (example.answer_type == "unknown" or example.is_skipped) else 0
+            is_yes = 1 if example.answer_type == "yes" else 0
+            is_no = 1 if example.answer_type == "no" else 0
             
             if example.answer_type == "number":
                 number_list = ["none", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
