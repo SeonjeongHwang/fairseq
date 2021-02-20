@@ -372,6 +372,7 @@ class CoqaPipeline(object):
     def _get_example(self,
                      data_list):
         examples = []
+        qas_map = {}
         for data in data_list:
             data_id = data["id"]
             paragraph_text = data["story"]
@@ -383,6 +384,9 @@ class CoqaPipeline(object):
             qas = list(zip(questions, answers))
             for i, (question, answer) in enumerate(qas):
                 qas_id = "{0}_{1}".format(data_id, i+1)
+                qas_map[qas_id] = qas_new_id
+                qas_new_id += 1
+                qas_id = qas_new_id
                 
                 answer_type, answer_subtype = self._get_answer_type(question, answer)
                 answer_text, span_start, span_end, is_skipped = self._get_answer_span(answer, answer_type, paragraph_text)
@@ -407,6 +411,9 @@ class CoqaPipeline(object):
                     is_skipped=is_skipped)
 
                 examples.append(example)
+                
+            with open(qas_map_path, "w") as o:
+                json.dump(qas_map, o)
         
         return examples
 
