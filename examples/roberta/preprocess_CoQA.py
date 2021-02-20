@@ -15,7 +15,7 @@ import string
 from examples.roberta.tool.eval_coqa import CoQAEvaluator
 
 
-def get_CoQA_features(args, encoder, Train_mode=True):
+def get_CoQA_features(args, encoder, cls_idx, sep_idx, Train_mode=True):
     
     task_name = "coqa"
     bpe_encoder = encoder
@@ -29,6 +29,8 @@ def get_CoQA_features(args, encoder, Train_mode=True):
         max_seq_length=args.max_positions,
         max_query_length=args.max_query_length,
         doc_stride=args.doc_stride,
+        cls_token=cls_idx,
+        sep_token=sep_idx,
         encoder=bpe_encoder)
     
     if Train_mode:
@@ -78,25 +80,7 @@ class InputExample(object):
         return "[{0}]\n".format(s)
 
 class InputFeatures(object):
-    """A single CoQA feature.
-                    unique_id=self.unique_id,
-                qas_id=example.qas_id,
-                doc_idx=doc_idx,
-                token2char_raw_start_index=doc_token2char_raw_start_index,
-                token2char_raw_end_index=doc_token2char_raw_end_index,
-                token2doc_index=doc_token2doc_index,
-                history_q = history_q_tokens
-                history_a = history_a_tokens
-                query = query_tokens
-                para_tokens=para_tokens,
-                para_length=doc_para_length,
-                start_position=start_position,
-                end_position=end_position,
-                is_unk=is_unk,
-                is_yes=is_yes,
-                is_no=is_no,
-                number=number,
-                option=option)"""
+    """A single CoQA feature."""
     def __init__(self,
                  unique_id,
                  qas_id,
@@ -104,10 +88,8 @@ class InputFeatures(object):
                  token2char_raw_start_index,
                  token2char_raw_end_index,
                  token2doc_index,
-                 history_q,
-                 history_a,
-                 query,
-                 para,
+                 input_tokens,
+                 p_mask,
                  para_length,
                  start_position=None,
                  end_position=None,
@@ -122,10 +104,8 @@ class InputFeatures(object):
         self.token2char_raw_start_index = token2char_raw_start_index
         self.token2char_raw_end_index = token2char_raw_end_index
         self.token2doc_index = token2doc_index
-        self.history_q = history_q
-        self.history_a = history_a
-        self.query = query
-        self.para = para
+        self.input_tokens = input_tokens
+        self.p_mask = p_mask
         self.para_length = para_length
         self.start_position = start_position
         self.end_position = end_position
@@ -437,62 +417,17 @@ class CoQAExampleProcessor(object):
                  max_seq_length,
                  max_query_length,
                  doc_stride,
+                 cls_token,
+                 sep_token,
                  encoder):
         
         self.max_seq_length = max_seq_length
         self.max_query_length = max_query_length
         self.doc_stride = doc_stride
+        self.cls_token = cls_token
+        self.sep_token = sep_token
         self.bpe_encoder = encoder
         self.unique_id = 1000000000
-    
-    def _convert_tokenized_index(self,
-                                 index,
-                                 pos,
-                                 M=None,
-                                 is_start=True):
-        """Convert index for tokenized text"""
-        if index[pos] is not None:
-            return index[pos]
-        
-        N = len(index)
-        rear = pos
-        while rear < N - 1 and index[rear] is None:
-            rear += 1
-        
-        front = pos
-        while front > 0 and index[front] is None:
-            front -= 1
-        
-        assert index[front] is not None or index[rear] is not None
-        
-        if index[front] is None:
-            if index[rear] >= 1:
-                if is_start:
-                    return 0
-                else:
-                    return index[rear] - 1
-            
-            return index[rear]
-        
-        if index[rear] is None:
-            if M is not None and index[front] < M - 1:
-                if is_start:
-                    return index[front] + 1
-                else:
-                    return M - 1
-            
-            return index[front]
-        
-        if is_start:
-            if index[rear] > index[front] + 1:
-                return index[front] + 1
-            else:
-                return index[rear]
-        else:
-            if index[rear] > index[front] + 1:
-                return index[rear] - 1
-            else:
-                return index[front]
     
     def _find_max_context(self,
                           doc_spans,
@@ -540,9 +475,7 @@ class CoQAExampleProcessor(object):
                              logging=False):
         """Converts a single `InputExample` into a single `InputFeatures`.     
         """
-        history_q_tokens = []
-        history_a_tokens = []
-        query_tokens = None
+        query_tokens = []
         qa_texts = example.question_text.split('<s>')
         for qa_text in qa_texts:
             qa_text = qa_text.strip()
@@ -554,16 +487,18 @@ class CoQAExampleProcessor(object):
                 continue
             
             q_text = qa_items[0].strip()
-            q_tokens, _, _, _ = self.bpe_encoder.encode_line(q_text) #bpe_tokens, char2token, token2startchar, token2endchar
-            history_q_tokens.append(q_tokens)
+            q_tokens, _, _, _ = self.bpe_encoder.encode_line("Q: " + q_text) #bpe_tokens, char2token, token2startchar, token2endchar
+            query_tokens.extend(q_tokens)
             
             if len(qa_items) < 2:
-                query_tokens = q_tokens
                 continue
             
             a_text = qa_items[1].strip()
-            a_tokens, _, _, _ = self.bpe_encoder.encode_line(a_text)
-            history_a_tokens.append(a_tokens)
+            a_tokens, _, _, _ = self.bpe_encoder.encode_line("A: " + a_text)
+            query_tokens.extend(a_tokens)
+            
+        if len(query_tokens) > self.max_query_length:
+            query_tokens = query_tokens[-self.max_query_length:]
         
         para_text = example.paragraph_text
         para_tokens, char2token_index, token2char_raw_start_index, token2char_raw_end_index = self.bpe_encoder.encode_line(para_text)
@@ -581,6 +516,7 @@ class CoQAExampleProcessor(object):
         max_para_length = self.max_seq_length - len(query_tokens) - 3
         total_para_length = len(para_tokens)
         
+        #################################################################################################
         # We can have documents that are longer than the maximum sequence length.
         # To deal with this we do a sliding window approach, where we take chunks
         # of the up to our max length with a stride of `doc_stride`.
@@ -603,11 +539,20 @@ class CoQAExampleProcessor(object):
         
         feature_list = []
         for (doc_idx, doc_span) in enumerate(doc_spans):
-            span_tokens = []
+            input_tokens = []
+            p_mask = []
             doc_token2char_raw_start_index = []
             doc_token2char_raw_end_index = []
             doc_token2doc_index = {}
             
+            input_tokens.append(self.cls_token)
+            
+            for query_token in query_tokens:
+                input_tokens.append(query_token)
+            
+            input_tokens.append(self.sep_token)
+            
+            doc_tokens = []
             for i in range(doc_span["length"]): #token 단위로 처리
                 token_idx = doc_span["start"] + i
                 
@@ -615,11 +560,16 @@ class CoQAExampleProcessor(object):
                 doc_token2char_raw_end_index.append(token2char_raw_end_index[token_idx])
                 
                 best_doc_idx = self._find_max_context(doc_spans, token_idx)
-                doc_token2doc_index[len(span_tokens)] = (best_doc_idx == doc_idx)
+                doc_token2doc_index[len(doc_tokens)] = (best_doc_idx == doc_idx)
                 
-                span_tokens.append(para_tokens[token_idx])
+                doc_tokens.append(para_tokens[token_idx])
+                input_tokens.append(para_tokens[token_idx])
+                
+            input_tokens.append(self.sep_token)
             
-            doc_para_length = len(span_tokens)
+            p_mask = [0] * len(input_tokens)
+            
+            doc_para_length = len(doc_tokens)
             cls_index = 0 ########
             
             start_position = None
@@ -661,10 +611,8 @@ class CoQAExampleProcessor(object):
                 token2char_raw_start_index=doc_token2char_raw_start_index,
                 token2char_raw_end_index=doc_token2char_raw_end_index,
                 token2doc_index=doc_token2doc_index,
-                history_q = history_q_tokens,
-                history_a = history_a_tokens,
-                query = query_tokens,
-                para=span_tokens,
+                input_tokens=input_tokens,
+                p_mask=p_mask,
                 para_length=doc_para_length,
                 start_position=start_position,
                 end_position=end_position,

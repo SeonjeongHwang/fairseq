@@ -109,30 +109,8 @@ class CoQATask(LegacyFairseqTask):
         bpe_encoder = MultiprocessingEncoder(self.args.encoder_json, self.args.vocab_bpe)
         bpe_encoder.initializer()
         
-        """
-        feature = InputFeatures(
-                unique_id=self.unique_id,
-                qas_id=example.qas_id,
-                doc_idx=doc_idx,
-                token2char_raw_start_index=doc_token2char_raw_start_index,
-                token2char_raw_end_index=doc_token2char_raw_end_index,
-                token2doc_index=doc_token2doc_index,
-                history_q = history_q_tokens,
-                history_a = history_a_tokens,
-                query = query_tokens,
-                para=span_tokens,
-                para_length=doc_para_length,
-                start_position=start_position,
-                end_position=end_position,
-                is_unk=is_unk,
-                is_yes=is_yes,
-                is_no=is_no,
-                number=number,
-                option=option)
-        """
-        
         ###preprocess_coqa부르기
-        features = get_CoQA_features(self.args, bpe_encoder, split=="train")
+        features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, split=="train")
         
         qas_idx = []
         src_tokens = []
@@ -148,33 +126,14 @@ class CoQATask(LegacyFairseqTask):
         
         for feature in features:
             #history들과 query 이어붙이고, max_query_length로 자르기(RearTruncate)
-            query_tokens = []
-            for q, a in zip(feature.history_q, feature.history_a):
-                #query_tokens.append(self.Q_token)
-                query_tokens.extend(q)
-                #query_tokens.append(self.A_token)
-                query_tokens.extend(a)
-            #query_tokens.append(self.Q_token)
-            query_tokens.extend(feature.query)
-            
-            src = query_tokens
-            if len(src) > self.args.max_query_length:
-                src = src[-self.args.max_query_length:]
-                
-                
-            src = [self.args.init_token]+src
-            src.append(self.args.separator_token)
-            src.extend(feature.para)
-            if len(src) > self.args.max_positions:
-                src = src[:self.args.max_query_length]
-            src.append(self.args.separator_token)
-            src = torch.IntTensor(src).long()
-            p_mask = torch.IntTensor(np.zeros((len(src)))).long()
+            src = torch.IntTensor(feature.input_tokens).long()
+            p_mask = torch.IntTensor(feature.p_mask).long()
             
             src_tokens.append(src)
             src_lengths.append(len(src))
             padding_mask.append(p_mask) #CLS, SEP, SEP
             qas_idx.append(feature.qas_id)
+            
             start_pos.append(feature.start_position)
             end_pos.append(feature.end_position)
             is_unk.append(feature.is_unk)
@@ -185,36 +144,6 @@ class CoQATask(LegacyFairseqTask):
         
         src_tokens = ListDataset(src_tokens, src_lengths)
         src_lengths = ListDataset(src_lengths)
-        #query = torch.IntTensor(query).long()
-        #query = ListDataset(queries, len(queries))
-
-        #query = RearTruncateDataset(query, self.args.max_query_length)
-        #if len(query) > self.args.max_query_length:
-        #    query = query[-self.args.max_query_length:]
-
-
-        ##[CLS]
-        #query = PrependTokenDataset(query, self.args.init_token)
-        #src = torch.cat([query.new([self.args.init_token]), query])
-        #context = torch.IntTensor(context).long()
-        #context = ListDataset(contexts, len(contexts))
-
-        ##[SEP]
-        #context = PrependTokenDataset(context, self.args.separator_token)
-        #context = torch.cat([context.new([self.args.separator_token]), context])
-
-        ##+context
-        #src = ConcatSentencesDataset(context, query)
-        #src_token = torch.cat([context, src])
-        
-        #src = TruncateDataset(src, self.args.max_positions-1)
-            
-        ##last [SEP]
-        #src = AppendTokenDataset(src, self.args.separator_token)
-        #src = torch.cat([src, src.new([self.args.separator_token])])
-        
-        #p_mask = ListDataset(padding_mask, len(padding_mask))
-        #p_mask = TruncateDataset(p_mask)
         
         dataset = {
             "id": IdDataset(),

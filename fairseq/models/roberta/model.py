@@ -420,12 +420,12 @@ class RobertaCoqaHead(nn.Module):
         
         self.end_denseT_1 = nn.Linear(hidden_dim*2, hidden_dim)
         self.end_activation_fnT = nn.Tanh()
-        self.end_normT = nn.LayerNorm([hidden_dim])
+        self.end_normT = nn.LayerNorm(hidden_dim)
         self.end_denseT_2 = nn.Linear(hidden_dim, 1)
         
         self.end_denseE_1 = nn.Linear(hidden_dim*2, hidden_dim)
         self.end_activation_fnE = nn.Tanh()
-        self.end_normE = nn.LayerNorm([hidden_dim])
+        self.end_normE = nn.LayerNorm(hidden_dim)
         self.end_denseE_2 = nn.Linear(hidden_dim, 1)
         
         self.ans_dense = nn.Linear(hidden_dim*2, hidden_dim)
@@ -482,7 +482,7 @@ class RobertaCoqaHead(nn.Module):
             end_result = self.end_normT(end_result)
             end_result = self.end_denseT_2(end_result)
         else:
-            start_index = F.one_hot(start_top_index, self.seq_len)
+            start_index = F.one_hot(start_top_index, self.seq_len).half()
             feat_result = torch.matmul(start_index, seq_result)
             feat_result = torch.unsqueeze(feat_result, dim=1)
             feat_result = self.tile(feat_result, [1, self.seq_len, 1, 1])
@@ -492,9 +492,9 @@ class RobertaCoqaHead(nn.Module):
             end_result = torch.cat([end_result, feat_result], dim=-1)
             
             end_result = self.end_denseE_1(end_result)
-            end_result = self.activation_fnE(end_result)
-            end_result = self.end_normE(end_result)
-            end_result = self.end_denseE_1(end_result)
+            end_result = self.end_activation_fnE(end_result)
+            end_result = self.end_normE(end_result) #[b,l,k,h]
+            end_result = self.end_denseE_2(end_result)
             
         ##answer
         answer_feat_result = torch.matmul(torch.unsqueeze(start_prob, dim=1).half(), seq_result) #[b,1,h]

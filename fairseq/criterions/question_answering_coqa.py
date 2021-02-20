@@ -45,12 +45,7 @@ class CoqaCriterion(FairseqCriterion):
         # fmt: on
         
     def get_masked_data(self, data, mask):
-        print(data)
-        t1 = data * mask
-        print(mask)
-        print(t1)
-        t2 = MIN_FLOAT * (1-mask)
-        return t1+t2
+        return data * mask+MIN_FLOAT * (1-mask)
 
     def forward(self, model, sample, reduce=True):
         """Compute ranking loss for the given sample.
@@ -95,6 +90,7 @@ class CoqaCriterion(FairseqCriterion):
         
         ##start
         start_result = logits["start_result"]
+        sample_size = start_result.size()[0]
         #start_result_mask = 1-p_mask
         
         start_result = torch.squeeze(start_result, dim=-1)
@@ -102,7 +98,7 @@ class CoqaCriterion(FairseqCriterion):
         start_prob = F.softmax(start_result, dim=-1)
         
         if not self.training:
-            start_top_prob, start_top_index = torch.topk(start_prob, k=args.start_n_top)
+            start_top_prob, start_top_index = torch.topk(start_prob, k=self.start_n_top)
             preds["start_prob"] = start_top_prob
             preds["start_index"] = start_top_index
             
@@ -122,7 +118,7 @@ class CoqaCriterion(FairseqCriterion):
             #end_result = self.get_masked_data(end_result, end_result_mask)
             end_prob = F.softmax(end_result, dim=-1)
             
-            end_top_prob, end_top_index = torch.topk(end_prob, k=self.args.start_n_top)
+            end_top_prob, end_top_index = torch.topk(end_prob, k=self.start_n_top)
             preds["end_prob"] = end_top_prob
             preds["end_index"] = end_top_index
             
@@ -192,10 +188,11 @@ class CoqaCriterion(FairseqCriterion):
             opt_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True)
             opt_loss = compute_loss(opt_label, opt_result, opt_result_mask)
             loss += torch.mean(opt_loss)
+            targets = sample
             
         else:
             loss = torch.tensor(0.0, requires_grad=True)
-            targets = preds
+            targets = None
 
         if self.prediction_h is not None:
             features = []
@@ -227,8 +224,8 @@ class CoqaCriterion(FairseqCriterion):
             "nsentences": sample_size,
             "sample_size": sample_size,
         }
-        if targets is not None:
-            logging_output["ncorrect"] = (logits.argmax(dim=1) == targets).sum()
+        #if targets is not None:
+        #    logging_output["ncorrect"] = (logits.argmax(dim=1) == targets).sum()
 
         return loss, sample_size, logging_output
 
