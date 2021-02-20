@@ -254,7 +254,7 @@ def train(
                 metrics.reset_meters("train_inner")
 
         end_of_epoch = not itr.has_next()
-        valid_losses, should_stop = validate_and_save(
+        valid_losses, should_stop = validate_and_save( ##################################validation
             cfg, trainer, task, epoch_itr, valid_subsets, end_of_epoch
         )
 
@@ -341,7 +341,7 @@ def validate_and_save(
     # Validate
     valid_losses = [None]
     if do_validate:
-        valid_losses = validate(cfg, trainer, task, epoch_itr, valid_subsets)
+        valid_losses = validate(cfg, trainer, task, epoch_itr, valid_subsets) #########################validation
 
     should_stop |= should_stop_early(cfg, valid_losses[0])
 
@@ -415,15 +415,17 @@ def validate(
         stats = get_valid_stats(cfg, trainer, agg.get_smoothed_values())
         progress.print(stats, tag=subset, step=trainer.get_num_updates())
 
-        valid_losses.append(stats[cfg.checkpoint.best_checkpoint_metric])
+        valid_losses.append(stats[cfg.checkpoint.best_checkpoint_metric]) ###############################error
     return valid_losses
 
 
+###########################
 def get_valid_stats(
     cfg: DictConfig, trainer: Trainer, stats: Dict[str, Any]
 ) -> Dict[str, Any]:
     stats["num_updates"] = trainer.get_num_updates()
-    if hasattr(checkpoint_utils.save_checkpoint, "best"):
+    print(stats)
+    if hasattr(checkpoint_utils.save_checkpoint, "best"): #안들어감
         key = "best_{0}".format(cfg.checkpoint.best_checkpoint_metric)
         best_function = max if cfg.checkpoint.maximize_best_checkpoint_metric else min
         stats[key] = best_function(

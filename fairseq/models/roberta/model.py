@@ -457,13 +457,13 @@ class RobertaCoqaHead(nn.Module):
         
         ##start
         start_result = seq_result
-        #start_result_mask = 1-p_mask
+        start_result_mask = 1-p_mask
         
         start_result = self.start_dense(start_result)
         start_logit = start_result
         
         start_result = torch.squeeze(start_result, dim=-1)
-        #start_result = self.get_masked_data(start_result, start_result_mask)
+        start_result = self.get_masked_data(start_result, start_result_mask)
         start_prob = F.softmax(start_result, dim=-1)
         
         if not self.training:

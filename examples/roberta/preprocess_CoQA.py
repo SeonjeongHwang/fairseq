@@ -15,7 +15,7 @@ import string
 from examples.roberta.tool.eval_coqa import CoQAEvaluator
 
 
-def get_CoQA_features(args, encoder, cls_idx, sep_idx, Train_mode=True):
+def get_CoQA_features(args, encoder, cls_idx, sep_idx, split="train"):
     
     task_name = "coqa"
     bpe_encoder = encoder
@@ -33,12 +33,12 @@ def get_CoQA_features(args, encoder, cls_idx, sep_idx, Train_mode=True):
         sep_token=sep_idx,
         encoder=bpe_encoder)
     
-    if Train_mode:
+    if split=="train":
         train_examples = data_pipeline.get_train_examples()
         train_features = example_processor.convert_examples_to_features(train_examples)
         return train_features
         
-    else:
+    elif split=="valid":
         predict_examples = data_pipeline.get_dev_examples()
         predict_features = example_processor.convert_examples_to_features(predict_examples)
         return predict_features
@@ -125,6 +125,7 @@ class CoqaPipeline(object):
         self.data_dir = data_dir
         self.task_name = task_name
         self.num_turn = num_turn
+        self.train_mode = True
     
     def get_train_examples(self):
         """Gets a collection of `InputExample`s for the train set."""
@@ -136,6 +137,7 @@ class CoqaPipeline(object):
     
     def get_dev_examples(self):
         """Gets a collection of `InputExample`s for the dev set."""
+        self.train_mode = False
         data_path = os.path.join(self.data_dir, "dev-{0}.json".format(self.task_name))
         data_list = self._read_json(data_path)
         example_list = self._get_example(data_list)
@@ -371,8 +373,14 @@ class CoqaPipeline(object):
     
     def _get_example(self,
                      data_list):
+        if self.train_mode:
+            qas_map_path = os.path.join(self.data_dir, "train-qas_map.json")
+        else:
+            qas_map_path = os.path.join(self.data_dir, "dev-qas_map.json")
+        
         examples = []
         qas_map = {}
+        qas_new_id = 0
         for data in data_list:
             data_id = data["id"]
             paragraph_text = data["story"]
@@ -384,7 +392,7 @@ class CoqaPipeline(object):
             qas = list(zip(questions, answers))
             for i, (question, answer) in enumerate(qas):
                 qas_id = "{0}_{1}".format(data_id, i+1)
-                qas_map[qas_id] = qas_new_id
+                qas_map[qas_new_id] = qas_id
                 qas_new_id += 1
                 qas_id = qas_new_id
                 

@@ -110,7 +110,7 @@ class CoQATask(LegacyFairseqTask):
         bpe_encoder.initializer()
         
         ###preprocess_coqa부르기
-        features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, split=="train")
+        features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, split=split)
         
         qas_idx = []
         src_tokens = []
@@ -149,7 +149,7 @@ class CoQATask(LegacyFairseqTask):
             "id": IdDataset(),
             "nsentences": NumSamplesDataset(),
             "ntokens": NumelDataset(src_tokens, reduce=True),
-            #"qas_id": RawLabelDataset(qas_idx),
+            "qas_id": RawLabelDataset(qas_idx),
             "net_input": {
                 "src_tokens": RightPadDataset(
                         src_tokens,
