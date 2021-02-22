@@ -39,6 +39,9 @@ class CoqaCriterion(FairseqCriterion):
         parser.add_argument('--ranking-head-name',
                             default='coqa',
                             help='name of the classification head to use')
+        parser.add_argument('--n-best-size',
+                            default=5,
+                            help='n best size for predictions')
         parser.add_argument('--start-n-top',
                             default=5,
                             help='Beam size for span start')
@@ -181,71 +184,71 @@ class CoqaCriterion(FairseqCriterion):
             end_label = sample["end_position"]
             end_loss = compute_loss(end_label, end_result, 1-p_mask)
             loss = torch.mean(start_loss + end_loss)
+            print("start&end:", loss)
             
             unk_label = sample["is_unk"]
             unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
             loss += torch.mean(unk_loss)
+            print("unk:", loss)
             
             yes_label = sample["is_yes"]
             yes_loss = F.binary_cross_entropy_with_logits(yes_result, yes_label.half())
             loss += torch.mean(yes_loss)
+            print("yes:", loss)
             
             no_label = sample["is_no"]
             no_loss = F.binary_cross_entropy_with_logits(no_result, no_label.half())
             loss += torch.mean(no_loss)
+            print("no:", loss)
             
             num_label = sample["number"]
             num_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True).values
             num_loss = compute_loss(num_label, num_result, num_result_mask)
             loss += torch.mean(num_loss)
+            print("num:", loss)
             
             opt_label = sample["option"]
             opt_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True).values
             opt_loss = compute_loss(opt_label, opt_result, opt_result_mask)
             loss += torch.mean(opt_loss)
+            print("opt:", loss)
+            
             targets = sample
             
         else:
             loss = torch.tensor(0.0, requires_grad=True)
             targets = None
 
-        if self.prediction_h is not None and not target_exist:
+        if self.prediction_h is not None and not self.training:
             for i in range(sample["nsentences"]):
-                feature = {}
-                feature["id"] = sample["id"].tolist()[i]
-                feature["qas_id"] = sample["qas_id"].tolist()[i]
-                feature["src_tokens"] = sample["net_input"]["src_tokens"].tolist()[i]
-                feature["start_idx"] = sample["start_position"].tolist()[i]
-                feature["end_idx"] = sample["end_position"].tolist()[i]
-                feature["is_unk"] = sample["is_unk"].tolist()[i]
-                feature["is_yes"] = sample["is_yes"].tolist()[i]
-                feature["is_no"] = sample["is_no"].tolist()[i]
-                feature["number"] = sample["number"].tolist()[i]
-                feature["option"] = sample["option"].tolist()[i]
+                pred = {}
+                pred["unique_id"] = sample["id"].tolist()[i]
+                pred["qas_id"] = sample["qas_id"].tolist()[i]
                 
-                feature["start_prob"] = preds["start_prob"].tolist()[i]
-                feature["start_index"] = preds["start_index"].tolist()[i]
-                feature["end_prob"] = preds["end_prob"].tolist()[i]
-                feature["end_index"] = preds["end_index"].tolist()[i]
-                feature["unk_prob"] = preds["unk_prob"].tolist()[i]
-                feature["yes_prob"] = preds["yes_prob"].tolist()[i]
-                feature["no_prob"] = preds["no_prob"].tolist()[i]
-                feature["num_probs"] = preds["num_probs"].tolist()[i]
-                feature["opt_probs"] = preds["opt_probs"].tolist()[i]
+                pred["start_prob"] = preds["start_prob"].tolist()[i]
+                pred["start_index"] = preds["start_index"].tolist()[i]
+                pred["end_prob"] = preds["end_prob"].tolist()[i]
+                pred["end_index"] = preds["end_index"].tolist()[i]
+                pred["unk_prob"] = preds["unk_prob"].tolist()[i]
+                pred["yes_prob"] = preds["yes_prob"].tolist()[i]
+                pred["no_prob"] = preds["no_prob"].tolist()[i]
+                pred["num_probs"] = preds["num_probs"].tolist()[i]
+                pred["opt_probs"] = preds["opt_probs"].tolist()[i]
                 
-                json.dump(feature, self.prediction_h)
-
+                prediction = json.dumps(pred)
+                self.prediction_h.write(prediction)
+                self.prediction_h.write("\n")
+                
         logging_output = {
             "loss": loss.data,
             "ntokens": sample["ntokens"],
             "nsentences": sample_size,
             "sample_size": sample_size,
         }
-        if target_exist:###################################################################################
-            logging_output["ncorrect"] = 1
 
         return loss, sample_size, logging_output
 
+    ###한번의 batch마다 불러짐
     @staticmethod
     def reduce_metrics(logging_outputs) -> None:
         """Aggregate logging outputs from data parallel training."""
@@ -261,14 +264,6 @@ class CoqaCriterion(FairseqCriterion):
             metrics.log_scalar(
                 "nll_loss", loss_sum / ntokens / math.log(2), ntokens, round=3
             )
-
-        if len(logging_outputs) > 0 and "ncorrect" in logging_outputs[0]:
-            ncorrect = sum(log.get("ncorrect", 0) for log in logging_outputs)
-            metrics.log_scalar(
-                "accuracy", 100.0 * ncorrect / nsentences, nsentences, round=1
-            )
-        #########################################여기서 f1 계산하기
-        metrics.log_scalar("f1", 50)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:

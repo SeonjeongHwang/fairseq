@@ -12,7 +12,15 @@ import pickle
 import time
 import string
 
+import numpy as np
+
 from examples.roberta.tool.eval_coqa import CoQAEvaluator
+import logging
+
+MAX_FLOAT = 1e30
+MIN_FLOAT = -1e30
+
+logger = logging.getLogger(__name__)
 
 
 def get_CoQA_features(args, encoder, cls_idx, sep_idx, split="train"):
@@ -36,13 +44,252 @@ def get_CoQA_features(args, encoder, cls_idx, sep_idx, split="train"):
     if split=="train":
         train_examples = data_pipeline.get_train_examples()
         train_features = example_processor.convert_examples_to_features(train_examples)
-        return train_features
+        return train_examples, train_features
         
     elif split=="valid":
         predict_examples = data_pipeline.get_dev_examples()
         predict_features = example_processor.convert_examples_to_features(predict_examples)
-        return predict_features
+        return predict_examples, predict_features
+    
+def get_best_predictions(args, examples, features, mode="train"):
+    """
+    <examples>
+    example = InputExample(
+    qas_id=qas_id,
+    question_text=question_text,
+    paragraph_text=paragraph_text,
+    orig_answer_text=orig_answer_text,
+    start_position=start_position,
+    answer_type=answer_type,
+    answer_subtype=answer_subtype,
+    is_skipped=is_skipped)
+    
+    <features>
+    feature = InputFeatures(
+    unique_id=self.unique_id,
+    qas_id=example.qas_id,
+    doc_idx=doc_idx,
+    token2char_raw_start_index=doc_token2char_raw_start_index,
+    token2char_raw_end_index=doc_token2char_raw_end_index,
+    token2doc_index=doc_token2doc_index,
+    input_tokens=input_tokens,
+    para_start_index=para_start_index,
+    para_end_index=para_end_index,
+    p_mask=p_mask,
+    para_length=doc_para_length,
+    start_position=start_position,
+    end_position=end_position,
+    is_unk=is_unk,
+    is_yes=is_yes,
+    is_no=is_no,
+    number=number,
+    option=option)
+    
+    <preds> => <results>
+    pred["unique_id"] = sample["id"].tolist()[i]
+    pred["qas_id"] = sample["qas_id"].tolist()[i]
+    pred["start_prob"] = preds["start_prob"].tolist()[i]
+    pred["start_index"] = preds["start_index"].tolist()[i]
+    pred["end_prob"] = preds["end_prob"].tolist()[i]
+    pred["end_index"] = preds["end_index"].tolist()[i]
+    pred["unk_prob"] = preds["unk_prob"].tolist()[i]
+    pred["yes_prob"] = preds["yes_prob"].tolist()[i]
+    pred["no_prob"] = preds["no_prob"].tolist()[i]
+    pred["num_probs"] = preds["num_probs"].tolist()[i]
+    pred["opt_probs"] = preds["opt_probs"].tolist()[i]
+    """
+    
+    def write_to_json(data_list, data_path):
+        data_folder = os.path.dirname(data_path)
+        if not os.path.exists(data_folder):
+            os.mkdir(data_folder)
 
+        with open(data_path, "w") as file:  
+            json.dump(data_list, file, indent=4)
+    
+    output_summary = os.path.join(args.task.data, "predict.summary.json")
+    output_detail = os.path.join(args.task.data, "predict.detail.json")
+    
+    if mode=="train":
+        qas_map_path = os.path.join(args.task.data, "train-qas_map.json")
+    else:
+        qas_map_path = os.path.join(args.task.data, "dev-qas_map.json")
+        
+    qas_id_map = None
+    with open(qas_map_path, "r") as f:
+        qas_id_map = json.load(f)
+    
+    prediction_file = args.task.save_predictions
+    preds = []
+    with open(prediction_file, "r") as f:
+        pred_lines = f.readlines()
+        for line in pred_lines:
+            preds.append(json.loads(line))
+    
+    qas_id_to_features = {}
+    unique_id_to_feature = {}
+    for feature in features:
+        if feature.qas_id not in qas_id_to_features:
+            qas_id_to_features[feature.qas_id] = []
+
+        qas_id_to_features[feature.qas_id].append(feature)
+        unique_id_to_feature[feature.unique_id] = feature
+        
+    unique_id_to_result = {}
+    for pred in preds:
+        unique_id_to_result[pred["unique_id"]] = pred
+
+    predict_summary_list = []
+    predict_detail_list = []
+    num_example = len(examples)
+    for (example_idx, example) in enumerate(examples):
+        if example_idx % 1000 == 0:
+            logger.info('Updating {0}/{1} example with predict'.format(example_idx, num_example))
+
+        if example.qas_id not in qas_id_to_features:
+            logger.info('No feature found for example: {0}'.format(example.qas_id))
+            continue
+
+        example_unk_score = MAX_FLOAT
+        example_yes_score = MIN_FLOAT
+        example_no_score = MIN_FLOAT
+        example_num_id = 0
+        example_num_score = MIN_FLOAT
+        example_num_probs = None
+        example_opt_id = 0
+        example_opt_score = MIN_FLOAT
+        example_opt_probs = None
+
+        example_all_predicts = []
+        example_features = qas_id_to_features[example.qas_id]
+        for example_feature in example_features:
+            if example_feature.unique_id not in unique_id_to_result:
+                logger.info('No result found for feature: {0}'.format(example_feature.unique_id))
+                continue
+
+            example_result = unique_id_to_result[example_feature.unique_id]
+            example_unk_score = min(example_unk_score, float(example_result["unk_prob"]))
+            example_yes_score = max(example_yes_score, float(example_result["yes_prob"]))
+            example_no_score = max(example_no_score, float(example_result["no_prob"]))
+
+            num_probs = [float(num_prob) for num_prob in example_result["num_probs"]]
+            num_id = int(np.argmax(num_probs[1:])) + 1
+            num_score = num_probs[num_id]
+            if example_num_score < num_score:
+                example_num_id = num_id
+                example_num_score = num_score
+                example_num_probs = num_probs
+
+            opt_probs = [float(opt_prob) for opt_prob in example_result["opt_probs"]]
+            opt_id = int(np.argmax(opt_probs[1:])) + 1
+            opt_score = opt_probs[opt_id]
+            if example_opt_score < opt_score:
+                example_opt_id = opt_id
+                example_opt_score = opt_score
+                example_opt_probs = opt_probs
+
+            for i in range(args.task.start_n_top):
+                start_prob = example_result["start_prob"][i]
+                start_index = example_result["start_index"][i]
+
+                for j in range(args.task.end_n_top):
+                    end_prob = example_result["end_prob"][i][j]
+                    end_index = example_result["end_index"][i][j]
+
+                    answer_length = end_index - start_index + 1
+                    if end_index < start_index or answer_length > args.task.max_answer_length:
+                        continue
+                        
+                    if start_index < example_feature.para_start_index or end_index < example_feature.para_start_index:
+                        continue
+
+                    if start_index > example_feature.para_end_index or end_index > example_feature.para_end_index:
+                        continue
+
+                    if start_index not in example_feature.token2doc_index:
+                        continue
+
+                    example_all_predicts.append({
+                        "unique_id": example_result["unique_id"],
+                        "start_prob": float(start_prob),
+                        "start_index": int(start_index),
+                        "end_prob": float(end_prob),
+                        "end_index": int(end_index),
+                        "predict_score": float(np.log(start_prob) + np.log(end_prob))
+                    })
+
+        example_all_predicts = sorted(example_all_predicts, key=lambda x: x["predict_score"], reverse=True)
+
+        is_visited = set()
+        example_top_predicts = []
+        for example_predict in example_all_predicts:
+            if len(example_top_predicts) >= args.criterion.n_best_size:
+                break
+
+            example_feature = unique_id_to_feature[example_predict["unique_id"]]
+            predict_start = example_feature.token2char_raw_start_index[example_predict["start_index"]-example_feature.para_start_index]
+            predict_end = example_feature.token2char_raw_end_index[example_predict["end_index"]-example_feature.para_start_index]
+            predict_text = example.paragraph_text[predict_start:predict_end + 1].strip()
+
+            if predict_text in is_visited:
+                continue
+
+            is_visited.add(predict_text)
+
+            example_top_predicts.append({
+                "predict_text": predict_text,
+                "predict_score": example_predict["predict_score"]
+            })
+
+        if len(example_top_predicts) == 0:
+            example_top_predicts.append({
+                "predict_text": "",
+                "predict_score": 0.0
+            })
+
+        example_best_predict = example_top_predicts[0]
+
+        example_question_text = example.question_text.split('<s>')[-1].strip()
+
+        predict_summary_list.append({
+            "qas_id": qas_id_map[str(example.qas_id)],
+            "question_text": example_question_text,
+            "label_text": example.orig_answer_text,
+            "unk_score": example_unk_score,
+            "yes_score": example_yes_score,
+            "no_score": example_no_score,
+            "num_id": example_num_id,
+            "num_score": example_num_score,
+            "num_probs": example_num_probs,
+            "opt_id": example_opt_id,
+            "opt_score": example_opt_score,
+            "opt_probs": example_opt_probs,
+            "predict_text": example_best_predict["predict_text"],
+            "predict_score": example_best_predict["predict_score"]
+        })
+
+        predict_detail_list.append({
+            "qas_id": qas_id_map[str(example.qas_id)],
+            "question_text": example_question_text,
+            "label_text": example.orig_answer_text,
+            "unk_score": example_unk_score,
+            "yes_score": example_yes_score,
+            "no_score": example_no_score,
+            "num_id": example_num_id,
+            "num_score": example_num_score,
+            "num_probs": example_num_probs,
+            "opt_id": example_opt_id,
+            "opt_score": example_opt_score,
+            "opt_probs": example_opt_probs,
+            "best_predict": example_best_predict,
+            "top_predicts": example_top_predicts
+        })
+        
+    write_to_json(predict_summary_list, output_summary)
+    write_to_json(predict_detail_list, output_detail)       
+        
+    return predict_summary_list
+         
 
 class InputExample(object):
     """A single CoQA example."""
@@ -89,6 +336,8 @@ class InputFeatures(object):
                  token2char_raw_end_index,
                  token2doc_index,
                  input_tokens,
+                 para_start_index,
+                 para_end_index,
                  p_mask,
                  para_length,
                  start_position=None,
@@ -105,6 +354,8 @@ class InputFeatures(object):
         self.token2char_raw_end_index = token2char_raw_end_index
         self.token2doc_index = token2doc_index
         self.input_tokens = input_tokens
+        self.para_start_index = para_start_index
+        self.para_end_index = para_end_index
         self.p_mask = p_mask
         self.para_length = para_length
         self.start_position = start_position
@@ -393,8 +644,8 @@ class CoqaPipeline(object):
             for i, (question, answer) in enumerate(qas):
                 qas_id = "{0}_{1}".format(data_id, i+1)
                 qas_map[qas_new_id] = qas_id
-                qas_new_id += 1
                 qas_id = qas_new_id
+                qas_new_id += 1
                 
                 answer_type, answer_subtype = self._get_answer_type(question, answer)
                 answer_text, span_start, span_end, is_skipped = self._get_answer_span(answer, answer_type, paragraph_text)
@@ -420,8 +671,8 @@ class CoqaPipeline(object):
 
                 examples.append(example)
                 
-            with open(qas_map_path, "w") as o:
-                json.dump(qas_map, o)
+        with open(qas_map_path, "w") as o:
+            json.dump(qas_map, o)
         
         return examples
 
@@ -442,7 +693,7 @@ class CoQAExampleProcessor(object):
         self.cls_token = cls_token
         self.sep_token = sep_token
         self.bpe_encoder = encoder
-        self.unique_id = 1000000000
+        self.unique_id = 0
     
     def _find_max_context(self,
                           doc_spans,
@@ -566,6 +817,7 @@ class CoQAExampleProcessor(object):
                 input_tokens.append(query_token)
             
             input_tokens.append(self.sep_token)
+            para_start_index = len(input_tokens)+1
             
             doc_tokens = []
             for i in range(doc_span["length"]): #token 단위로 처리
@@ -579,6 +831,8 @@ class CoQAExampleProcessor(object):
                 
                 doc_tokens.append(para_tokens[token_idx])
                 input_tokens.append(para_tokens[token_idx])
+            
+            para_end_index = len(input_tokens)
                 
             input_tokens.append(self.sep_token)
             
@@ -627,6 +881,8 @@ class CoQAExampleProcessor(object):
                 token2char_raw_end_index=doc_token2char_raw_end_index,
                 token2doc_index=doc_token2doc_index,
                 input_tokens=input_tokens,
+                para_start_index=para_start_index,
+                para_end_index=para_end_index,
                 p_mask=p_mask,
                 para_length=doc_para_length,
                 start_position=start_position,

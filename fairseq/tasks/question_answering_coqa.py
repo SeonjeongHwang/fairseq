@@ -63,6 +63,8 @@ class CoQATask(LegacyFairseqTask):
             "--max-query-length", type=int, help="max length of each query (histories+query)"
         )
         parser.add_argument(
+            "--max-answer-length", type=int, help="max length of answer")
+        parser.add_argument(
             "--doc-stride", type=int, help=""
         )
         parser.add_argument(
@@ -72,6 +74,8 @@ class CoQATask(LegacyFairseqTask):
     def __init__(self, args, dictionary):
         super().__init__(args)
         self.dictionary = dictionary
+        self.examples = {}
+        self.features = {}
 
     @classmethod
     def load_dictionary(cls, args, filename, source=True):
@@ -110,7 +114,10 @@ class CoQATask(LegacyFairseqTask):
         bpe_encoder.initializer()
         
         ###preprocess_coqa부르기
-        features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, split=split)
+        examples, features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, split=split)
+        
+        self.examples[split] = examples
+        self.features[split] = features
         
         qas_idx = []
         src_tokens = []

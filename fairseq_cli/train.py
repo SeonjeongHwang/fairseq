@@ -33,6 +33,10 @@ from fairseq.model_parallel.megatron_trainer import MegatronTrainer
 from fairseq.trainer import Trainer
 from omegaconf import DictConfig, OmegaConf
 
+from examples.roberta.preprocess_CoQA import *
+from examples.roberta.tool.convert_coqa import *
+from examples.roberta.tool.eval_coqa import *
+
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -260,10 +264,10 @@ def train(
 
         if should_stop:
             break
-
-    # log end-of-epoch stats
+            
+    # log end-of-epoch stats #################
     logger.info("end of epoch {} (average epoch stats below)".format(epoch_itr.epoch))
-    stats = get_training_stats(metrics.get_smoothed_values("train"))
+    stats = get_training_stats(metrics.get_smoothed_values("train"))######################## last logging
     progress.print(stats, tag="train", step=num_updates)
 
     # reset epoch-level meters
@@ -419,12 +423,26 @@ def validate(
     return valid_losses
 
 
-###########################
+########################### last logging
 def get_valid_stats(
     cfg: DictConfig, trainer: Trainer, stats: Dict[str, Any]
 ) -> Dict[str, Any]:
     stats["num_updates"] = trainer.get_num_updates()
-    print(stats)
+    mode = "valid"
+    
+    ######## CoQA evaluation ########
+    predict_summary_list = get_best_predictions(cfg, trainer.task.examples[mode], trainer.task.features[mode], mode=mode) 
+    predict_span = convert_coqa(cfg, predict_summary_list)
+    
+    ## Official evaluation script for CoQA ##
+    gold_file = os.path.join(cfg.task.data, "dev-coqa.json")
+    evaluator = CoQAEvaluator(gold_file)
+    pred_data = CoQAEvaluator.preds_to_dict(predict_span)
+    eval_result = evaluator.model_performance(pred_data)
+    stats["f1"] = eval_result["overall"]["f1"]
+    stats["em"] = eval_result["overall"]["em"]
+    print("in train.py:",stats)
+    
     if hasattr(checkpoint_utils.save_checkpoint, "best"): #안들어감
         key = "best_{0}".format(cfg.checkpoint.best_checkpoint_metric)
         best_function = max if cfg.checkpoint.maximize_best_checkpoint_metric else min

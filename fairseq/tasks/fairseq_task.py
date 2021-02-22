@@ -44,6 +44,8 @@ class FairseqTask(object):
 
     def __init__(self, cfg: FairseqDataclass, **kwargs):
         self.cfg = cfg
+        self.examples = {}
+        self.features = {}
         self.datasets = {}
         self.dataset_to_epoch_iter = {}
 

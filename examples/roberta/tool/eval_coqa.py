@@ -52,7 +52,10 @@ class CoQAEvaluator():
 
     @staticmethod
     def preds_to_dict(pred_file):
-        preds = json.load(open(pred_file))
+        if type(pred_file)==list:
+            preds = pred_file
+        else:
+            preds = json.load(open(pred_file))
         pred_dict = {}
         for pred in preds:
             pred_dict[(pred['id'], pred['turn_id'])] = pred['answer']
