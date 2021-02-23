@@ -61,7 +61,7 @@ class CoqaCriterion(FairseqCriterion):
                 data = torch.cat([data, ori_data], dim=dim)
         return data
 
-    def forward(self, model, sample, reduce=True):
+    def forward(self, model, sample, reduce=True): ####fairseq_task.py 430줄
         """Compute ranking loss for the given sample.
 
         Returns a tuple with three elements:
@@ -178,42 +178,66 @@ class CoqaCriterion(FairseqCriterion):
         opt_probs = F.softmax(opt_result, dim=-1)
         preds["opt_probs"] = opt_probs
         
-        if self.training:
+        if target_exist and self.training:
             start_label = sample["start_position"]
-            start_loss = compute_loss(start_label, start_result, 1-p_mask)
+            start_loss = compute_loss(start_label, start_result, 1-p_mask) # [b],[b,l],[b,l]
             end_label = sample["end_position"]
-            end_loss = compute_loss(end_label, end_result, 1-p_mask)
+            end_loss = compute_loss(end_label, end_result, 1-p_mask) # [b], [b,l], [b,l]
             loss = torch.mean(start_loss + end_loss)
-            print("start&end:", loss)
             
             unk_label = sample["is_unk"]
             unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
             loss += torch.mean(unk_loss)
-            print("unk:", loss)
             
             yes_label = sample["is_yes"]
             yes_loss = F.binary_cross_entropy_with_logits(yes_result, yes_label.half())
             loss += torch.mean(yes_loss)
-            print("yes:", loss)
             
             no_label = sample["is_no"]
             no_loss = F.binary_cross_entropy_with_logits(no_result, no_label.half())
             loss += torch.mean(no_loss)
-            print("no:", loss)
             
             num_label = sample["number"]
             num_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True).values
             num_loss = compute_loss(num_label, num_result, num_result_mask)
             loss += torch.mean(num_loss)
-            print("num:", loss)
             
             opt_label = sample["option"]
             opt_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True).values
             opt_loss = compute_loss(opt_label, opt_result, opt_result_mask)
             loss += torch.mean(opt_loss)
-            print("opt:", loss)
-            
             targets = sample
+            
+        elif target_exist:
+            start_label = sample["start_position"]
+            start_loss = compute_loss(start_label, start_result, 1-p_mask) # [b],[b,l],[b,l]
+            end_label = sample["end_position"]
+            end_result = end_result[:,0,:]
+            end_loss = compute_loss(end_label, end_result, 1-p_mask) # [b],[b,k,l],[b,l]
+            loss = torch.mean(start_loss + end_loss)
+            
+            unk_label = sample["is_unk"]
+            unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
+            loss += torch.mean(unk_loss)
+            
+            yes_label = sample["is_yes"]
+            yes_loss = F.binary_cross_entropy_with_logits(yes_result, yes_label.half())
+            loss += torch.mean(yes_loss)
+            
+            no_label = sample["is_no"]
+            no_loss = F.binary_cross_entropy_with_logits(no_result, no_label.half())
+            loss += torch.mean(no_loss)
+            
+            num_label = sample["number"]
+            num_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True).values
+            num_loss = compute_loss(num_label, num_result, num_result_mask)
+            loss += torch.mean(num_loss)
+            
+            opt_label = sample["option"]
+            opt_result_mask = torch.max(1-p_mask, dim=-1, keepdim=True).values
+            opt_loss = compute_loss(opt_label, opt_result, opt_result_mask)
+            loss += torch.mean(opt_loss)
+            targets = sample            
             
         else:
             loss = torch.tensor(0.0, requires_grad=True)

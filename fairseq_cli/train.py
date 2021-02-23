@@ -134,6 +134,10 @@ def main(cfg: FairseqConfig) -> None:
     lr = trainer.get_lr()
     train_meter = meters.StopwatchMeter()
     train_meter.start()
+    
+    #################
+    ##### train #####
+    #################
     while epoch_itr.next_epoch_idx <= max_epoch:
         if lr <= cfg.optimization.stop_min_lr:
             logger.info(
@@ -441,7 +445,6 @@ def get_valid_stats(
     eval_result = evaluator.model_performance(pred_data)
     stats["f1"] = eval_result["overall"]["f1"]
     stats["em"] = eval_result["overall"]["em"]
-    print("in train.py:",stats)
     
     if hasattr(checkpoint_utils.save_checkpoint, "best"): #안들어감
         key = "best_{0}".format(cfg.checkpoint.best_checkpoint_metric)

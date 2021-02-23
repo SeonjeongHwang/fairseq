@@ -142,4 +142,5 @@ models/
 vocab.bpe
 dict.txt
 encoder.json
+nohup.out
 

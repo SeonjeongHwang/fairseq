@@ -111,9 +111,9 @@ def get_best_predictions(args, examples, features, mode="train"):
     output_detail = os.path.join(args.task.data, "predict.detail.json")
     
     if mode=="train":
-        qas_map_path = os.path.join(args.task.data, "train-qas_map.json")
+        qas_map_path = os.path.join(args.task.data, "train-qas_id_map.json")
     else:
-        qas_map_path = os.path.join(args.task.data, "dev-qas_map.json")
+        qas_map_path = os.path.join(args.task.data, "dev-qas_id_map.json")
         
     qas_id_map = None
     with open(qas_map_path, "r") as f:
@@ -625,9 +625,9 @@ class CoqaPipeline(object):
     def _get_example(self,
                      data_list):
         if self.train_mode:
-            qas_map_path = os.path.join(self.data_dir, "train-qas_map.json")
+            qas_map_path = os.path.join(self.data_dir, "train-qas_id_map.json")
         else:
-            qas_map_path = os.path.join(self.data_dir, "dev-qas_map.json")
+            qas_map_path = os.path.join(self.data_dir, "dev-qas_id_map.json")
         
         examples = []
         qas_map = {}
