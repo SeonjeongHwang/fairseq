@@ -694,6 +694,7 @@ class CoQAExampleProcessor(object):
         self.sep_token = sep_token
         self.bpe_encoder = encoder
         self.unique_id = 0
+        self.f = open("data/coqa/example_check.txt", "w")
     
     def _find_max_context(self,
                           doc_spans,
@@ -741,6 +742,7 @@ class CoQAExampleProcessor(object):
                              logging=False):
         """Converts a single `InputExample` into a single `InputFeatures`.     
         """
+        
         query_tokens = []
         qa_texts = example.question_text.split('<s>')
         for qa_text in qa_texts:
@@ -753,21 +755,33 @@ class CoQAExampleProcessor(object):
                 continue
             
             q_text = qa_items[0].strip()
-            q_tokens, _, _, _ = self.bpe_encoder.encode_line("Q: " + q_text) #bpe_tokens, char2token, token2startchar, token2endchar
+            q_tokens, _, _, _, _ = self.bpe_encoder.encode_line("Q: " + q_text) #bpe_tokens, char2token, token2startchar, token2endchar
             query_tokens.extend(q_tokens)
             
             if len(qa_items) < 2:
+                self.f.write("\nQuery:"+q_text+"\n")
                 continue
             
             a_text = qa_items[1].strip()
-            a_tokens, _, _, _ = self.bpe_encoder.encode_line("A: " + a_text)
+            a_tokens, _, _, _, _ = self.bpe_encoder.encode_line("A: " + a_text)
             query_tokens.extend(a_tokens)
             
         if len(query_tokens) > self.max_query_length:
             query_tokens = query_tokens[-self.max_query_length:]
         
         para_text = example.paragraph_text
-        para_tokens, char2token_index, token2char_raw_start_index, token2char_raw_end_index = self.bpe_encoder.encode_line(para_text)
+        para_tokens, char2token_index, sis_tokens_index, token2char_raw_start_index, token2char_raw_end_index = self.bpe_encoder.encode_line(para_text)
+        
+        self.f.write("Original answer:"+example.orig_answer_text+"\n")
+        answer_start_index = example.start_position
+        answer_end_index = example.start_position + len(example.orig_answer_text) - 1
+        self.f.write("Using index:"+para_text[answer_start_index:answer_end_index]+"\n")
+        answer_start_token = char2token_index[answer_start_index]
+        answer_start_token = sis_tokens_index[answer_start_token][0]
+        answer_end_token = char2token_index[answer_end_index]
+        answer_end_token = sis_tokens_index[answer_end_token][-1]
+        answer_tokens = para_tokens[answer_start_token:answer_end_token+1] #### +1?
+        self.f.write("After BPE:"+self.bpe_encoder.decode_tokens(answer_tokens)+"\n")
         
         if example.answer_type not in ["unknown", "yes", "no"] and not example.is_skipped and example.orig_answer_text:
             raw_start_char_pos = example.start_position
@@ -817,7 +831,7 @@ class CoQAExampleProcessor(object):
                 input_tokens.append(query_token)
             
             input_tokens.append(self.sep_token)
-            para_start_index = len(input_tokens)+1
+            para_start_index = len(input_tokens)
             
             doc_tokens = []
             for i in range(doc_span["length"]): #token 단위로 처리
@@ -835,7 +849,6 @@ class CoQAExampleProcessor(object):
             para_end_index = len(input_tokens)
                 
             input_tokens.append(self.sep_token)
-            
             p_mask = [0] * len(input_tokens)
             
             doc_para_length = len(doc_tokens)
@@ -863,8 +876,20 @@ class CoQAExampleProcessor(object):
                 doc_start = doc_span["start"]
                 doc_end = doc_start + doc_span["length"] - 1
                 if tokenized_start_token_pos >= doc_start and tokenized_end_token_pos <= doc_end:
-                    start_position = tokenized_start_token_pos - doc_start
-                    end_position = tokenized_end_token_pos - doc_start
+                    start_position = sis_tokens_index[tokenized_start_token_pos][0]
+                    end_position = sis_tokens_index[tokenized_end_token_pos][-1]
+                    
+                    start_position = start_position - doc_start + para_start_index
+                    end_position = end_position - doc_start + para_start_index
+                    
+                    answer_tokens = input_tokens[start_position:end_position+1]
+                    final_answer_text = self.bpe_encoder.decode_tokens(answer_tokens)
+                    self.f.write("After split:"+final_answer_text+"\n\n")
+                    
+                    if example.orig_answer_text.strip() != final_answer_text.strip():
+                        print(example.orig_answer_text.strip())
+                        print(final_answer_text.strip())
+                    
                 else:
                     start_position = cls_index
                     end_position = cls_index
@@ -872,7 +897,8 @@ class CoQAExampleProcessor(object):
             else:
                 start_position = cls_index
                 end_position = cls_index
-            
+                
+               
             feature = InputFeatures(
                 unique_id=self.unique_id,
                 qas_id=example.qas_id,

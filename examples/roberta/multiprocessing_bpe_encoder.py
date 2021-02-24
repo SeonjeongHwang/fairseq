@@ -99,8 +99,8 @@ class MultiprocessingEncoder(object):
 
     def encode(self, line):
         global bpe
-        bpe_tokens, char2token, token2startchar, token2endchar = bpe.encode(line)
-        return bpe_tokens, char2token, token2startchar, token2endchar
+        bpe_tokens, char2token, sis_tokens_index, token2startchar, token2endchar = bpe.encode(line)
+        return bpe_tokens, char2token, sis_tokens_index, token2startchar, token2endchar
 
     def decode(self, tokens):
         global bpe
@@ -111,15 +111,11 @@ class MultiprocessingEncoder(object):
         Encode a set of line.
         """     
         line = line.strip()
-        bpe_tokens, char2token, token2startchar, token2endchar = self.encode(line)
-        return bpe_tokens, char2token, token2startchar, token2endchar
+        bpe_tokens, char2token, sis_tokens_index, token2startchar, token2endchar = self.encode(line)
+        return bpe_tokens, char2token, sis_tokens_index, token2startchar, token2endchar
 
-    def decode_lines(self, lines):
-        dec_lines = []
-        for line in lines:
-            tokens = map(int, line.strip().split())
-            dec_lines.append(self.decode(tokens))
-        return ["PASS", dec_lines]
+    def decode_tokens(self, tokens):
+        return self.decode(tokens)
 
 
 if __name__ == "__main__":

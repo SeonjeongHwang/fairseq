@@ -116,6 +116,7 @@ class Encoder:
     def encode(self, text):
         orig_text = text
         char2token = []
+        sis_tokens_index = []
         token2startchar = []
         token2endchar = []
         bpe_tokens = []
@@ -123,13 +124,27 @@ class Encoder:
         """
         original text에서의 하나의 token이 두 개 이상 bpe token으로 표현되는 경우가 존재.
         이 경우 char2token에서는 해당 token의 모든 char이 첫번째 bpe token의 index를 가리킴
+        각 token은 하나의 word에서 파생된 각 token들의 index를 sis_tokens_index에 저장함
         token2startchar, token2endchar의 경우 모든 bpe token들이 해당 token의 첫번째, 마지막 character index를 동일하게 가리킴
         
         """
         
         char_idx = 0
+        words = text.split()
+        words.reverse()
+        word = words.pop()
+        token_idx = 0
+        sis_tokens = []
         for token in self.re.findall(self.pat, text):
             if orig_text.startswith(token):
+                if len(word) == 0:
+                    word = words.pop()
+                if word.startswith(token.strip()):
+                    word = word[len(token.strip()):]
+                    if sis_tokens != []:
+                        for _ in range(len(sis_tokens)):
+                            sis_tokens_index.append(sis_tokens)
+                    sis_tokens = []
                 orig_text = orig_text[len(token):]
                 char_start_idx = char_idx
                 char_idx += len(token)
@@ -139,13 +154,18 @@ class Encoder:
                 for c in before_token:
                     char2token.append(len(bpe_tokens))
                 for bpe_token in self.bpe(token).split(" "):
+                    sis_tokens.append(token_idx)
+                    token_idx += 1
                     token2startchar.append(char_start_idx)
                     token2endchar.append(char_end_idx)                    
                     bpe_tokens.append(self.encoder[bpe_token])
-            
+        if sis_tokens != []:
+            for _ in range(len(sis_tokens)):
+                sis_tokens_index.append(sis_tokens)
+                
         assert len(bpe_tokens)==len(token2startchar) and len(bpe_tokens)==len(token2endchar)
         assert len(text)==len(char2token)
-        return bpe_tokens, char2token, token2startchar, token2endchar
+        return bpe_tokens, char2token, sis_tokens_index, token2startchar, token2endchar
 
     def decode(self, tokens):
         text = "".join([self.decoder.get(token, token) for token in tokens])
