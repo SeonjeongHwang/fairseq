@@ -165,6 +165,7 @@ class Encoder:
                 
         assert len(bpe_tokens)==len(token2startchar) and len(bpe_tokens)==len(token2endchar)
         assert len(text)==len(char2token)
+        assert len(bpe_tokens)==len(sis_tokens_index)
         return bpe_tokens, char2token, sis_tokens_index, token2startchar, token2endchar
 
     def decode(self, tokens):

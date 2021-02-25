@@ -114,7 +114,7 @@ class CoQATask(LegacyFairseqTask):
         bpe_encoder.initializer()
         
         ###preprocess_coqa부르기
-        examples, features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, split=split)
+        examples, features = get_CoQA_features(self.args, bpe_encoder, self.args.init_token, self.args.separator_token, self.dictionary.pad(), split=split)
         
         self.examples[split] = examples
         self.features[split] = features
@@ -132,13 +132,12 @@ class CoQATask(LegacyFairseqTask):
         option = []
         
         for feature in features:
-            #history들과 query 이어붙이고, max_query_length로 자르기(RearTruncate)
             src = torch.IntTensor(feature.input_tokens).long()
             p_mask = torch.IntTensor(feature.p_mask).long()
             
             src_tokens.append(src)
             src_lengths.append(len(src))
-            padding_mask.append(p_mask) #CLS, SEP, SEP
+            padding_mask.append(p_mask)
             qas_idx.append(feature.qas_id)
             
             start_pos.append(feature.start_position)

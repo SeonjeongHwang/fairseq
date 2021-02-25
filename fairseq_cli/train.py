@@ -435,7 +435,10 @@ def get_valid_stats(
     mode = "valid"
     
     ######## CoQA evaluation ########
-    predict_summary_list = get_best_predictions(cfg, trainer.task.examples[mode], trainer.task.features[mode], mode=mode) 
+    bpe_encoder = MultiprocessingEncoder(cfg.task.encoder_json, cfg.task.vocab_bpe)
+    bpe_encoder.initializer()
+    
+    predict_summary_list = get_best_predictions(cfg, trainer.task.examples[mode], trainer.task.features[mode], bpe_encoder=bpe_encoder, mode=mode) 
     predict_span = convert_coqa(cfg, predict_summary_list)
     
     ## Official evaluation script for CoQA ##

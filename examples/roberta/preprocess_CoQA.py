@@ -15,6 +15,7 @@ import string
 import numpy as np
 
 from examples.roberta.tool.eval_coqa import CoQAEvaluator
+from examples.roberta.multiprocessing_bpe_encoder import *
 import logging
 
 MAX_FLOAT = 1e30
@@ -23,7 +24,7 @@ MIN_FLOAT = -1e30
 logger = logging.getLogger(__name__)
 
 
-def get_CoQA_features(args, encoder, cls_idx, sep_idx, split="train"):
+def get_CoQA_features(args, encoder, cls_idx, sep_idx, pad_idx, split="train"):
     
     task_name = "coqa"
     bpe_encoder = encoder
@@ -39,6 +40,7 @@ def get_CoQA_features(args, encoder, cls_idx, sep_idx, split="train"):
         doc_stride=args.doc_stride,
         cls_token=cls_idx,
         sep_token=sep_idx,
+        pad_token=pad_idx,
         encoder=bpe_encoder)
     
     if split=="train":
@@ -51,7 +53,7 @@ def get_CoQA_features(args, encoder, cls_idx, sep_idx, split="train"):
         predict_features = example_processor.convert_examples_to_features(predict_examples)
         return predict_examples, predict_features
     
-def get_best_predictions(args, examples, features, mode="train"):
+def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
     """
     <examples>
     example = InputExample(
@@ -188,26 +190,58 @@ def get_best_predictions(args, examples, features, mode="train"):
                 example_opt_score = opt_score
                 example_opt_probs = opt_probs
 
+                
             for i in range(args.task.start_n_top):
                 start_prob = example_result["start_prob"][i]
                 start_index = example_result["start_index"][i]
 
                 for j in range(args.task.end_n_top):
                     end_prob = example_result["end_prob"][i][j]
-                    end_index = example_result["end_index"][i][j]
-
-                    answer_length = end_index - start_index + 1
-                    if end_index < start_index or answer_length > args.task.max_answer_length:
+                    end_index = example_result["end_index"][i][j] #input_tokens 상에서의 prediction
+                    
+                    ##start 보다 end index의 값이 같거나 큰가?
+                    if start_index > end_index:
                         continue
                         
-                    if start_index < example_feature.para_start_index or end_index < example_feature.para_start_index:
+                    ##input_tokens 상의 context 범위 내에 있는가?
+                    if start_index < example_feature.para_start_index or end_index > example_feature.para_end_index:
+                        continue
+                        
+                    """
+                    
+                    ##
+                    predict_tokens = example_feature.input_tokens[start_index:end_index+1]
+                    predict_text = 
+                    
+                    doc_start_token_idx = start_index - example_feature.para_start_index
+                    if doc_start_token_idx < 0: continue
+                    raw_start_token_idx = doc_start_token_idx + example_feature.doc_start
+                    doc_end_token_idx = end_index - example_feature.para_start_index
+                    if doc_end_token_idx < 0: continue
+                    raw_end_token_idx = doc_end_token_idx + example_feature.doc_start
+                    
+                    if raw_start_token_idx > raw_end_token_idx:
+                        continue
+                        
+                    if raw_end_token_idx >= len(example_feature.sis_tokens_index):
+                        continue
+                    
+                    raw_modified_start_token_idx = example_feature.sis_tokens_index[raw_start_token_idx][0]
+                    doc_start_index = raw_modified_start_token_idx - example_feature.doc_start
+                    raw_modified_end_token_idx = example_feature.sis_tokens_index[raw_end_token_idx][-1]
+                    doc_end_index = raw_modified_start_token_idx - example_feature.doc_start
+                    
+                    answer_length = end_index - start_index + 1
+                    if answer_length > args.task.max_answer_length:
                         continue
 
-                    if start_index > example_feature.para_end_index or end_index > example_feature.para_end_index:
+                    if doc_end_index >= len(example_feature.token2char_raw_start_index):
                         continue
-
+                        
                     if start_index not in example_feature.token2doc_index:
                         continue
+                        
+                    """    
 
                     example_all_predicts.append({
                         "unique_id": example_result["unique_id"],
@@ -217,7 +251,7 @@ def get_best_predictions(args, examples, features, mode="train"):
                         "end_index": int(end_index),
                         "predict_score": float(np.log(start_prob) + np.log(end_prob))
                     })
-
+                    
         example_all_predicts = sorted(example_all_predicts, key=lambda x: x["predict_score"], reverse=True)
 
         is_visited = set()
@@ -225,11 +259,15 @@ def get_best_predictions(args, examples, features, mode="train"):
         for example_predict in example_all_predicts:
             if len(example_top_predicts) >= args.criterion.n_best_size:
                 break
-
-            example_feature = unique_id_to_feature[example_predict["unique_id"]]
-            predict_start = example_feature.token2char_raw_start_index[example_predict["start_index"]-example_feature.para_start_index]
-            predict_end = example_feature.token2char_raw_end_index[example_predict["end_index"]-example_feature.para_start_index]
+            
+            predict_tokens = example_feature.input_tokens[start_index:end_index+1]
+            predict_text = bpe_encoder.decode_tokens(predict_tokens)
+            
+            """
+            predict_start = example_feature.token2char_raw_start_index[doc_start_index]
+            predict_end = example_feature.token2char_raw_end_index[doc_end_index]
             predict_text = example.paragraph_text[predict_start:predict_end + 1].strip()
+            """
 
             if predict_text in is_visited:
                 continue
@@ -252,6 +290,7 @@ def get_best_predictions(args, examples, features, mode="train"):
         example_question_text = example.question_text.split('<s>')[-1].strip()
 
         predict_summary_list.append({
+            "befor_id": example.qas_id,
             "qas_id": qas_id_map[str(example.qas_id)],
             "question_text": example_question_text,
             "label_text": example.orig_answer_text,
@@ -264,6 +303,7 @@ def get_best_predictions(args, examples, features, mode="train"):
             "opt_id": example_opt_id,
             "opt_score": example_opt_score,
             "opt_probs": example_opt_probs,
+            
             "predict_text": example_best_predict["predict_text"],
             "predict_score": example_best_predict["predict_score"]
         })
@@ -332,10 +372,13 @@ class InputFeatures(object):
                  unique_id,
                  qas_id,
                  doc_idx,
+                 doc_start,
+                 sis_tokens_index,
                  token2char_raw_start_index,
                  token2char_raw_end_index,
                  token2doc_index,
                  input_tokens,
+                 src_length,
                  para_start_index,
                  para_end_index,
                  p_mask,
@@ -350,10 +393,13 @@ class InputFeatures(object):
         self.unique_id = unique_id
         self.qas_id = qas_id
         self.doc_idx = doc_idx
+        self.doc_start = doc_start
+        self.sis_tokens_index = sis_tokens_index
         self.token2char_raw_start_index = token2char_raw_start_index
         self.token2char_raw_end_index = token2char_raw_end_index
         self.token2doc_index = token2doc_index
         self.input_tokens = input_tokens
+        self.src_length = src_length
         self.para_start_index = para_start_index
         self.para_end_index = para_end_index
         self.p_mask = p_mask
@@ -685,6 +731,7 @@ class CoQAExampleProcessor(object):
                  doc_stride,
                  cls_token,
                  sep_token,
+                 pad_token,
                  encoder):
         
         self.max_seq_length = max_seq_length
@@ -692,6 +739,7 @@ class CoQAExampleProcessor(object):
         self.doc_stride = doc_stride
         self.cls_token = cls_token
         self.sep_token = sep_token
+        self.pad_token = pad_token
         self.bpe_encoder = encoder
         self.unique_id = 0
         self.f = open("data/coqa/example_check.txt", "w")
@@ -787,7 +835,9 @@ class CoQAExampleProcessor(object):
             raw_start_char_pos = example.start_position
             raw_end_char_pos = raw_start_char_pos + len(example.orig_answer_text) - 1
             tokenized_start_token_pos = char2token_index[raw_start_char_pos]
+            tokenized_start_token_pos = sis_tokens_index[tokenized_start_token_pos][0]
             tokenized_end_token_pos = char2token_index[raw_end_char_pos]
+            tokenized_end_token_pos = sis_tokens_index[tokenized_end_token_pos][-1]
             assert tokenized_start_token_pos <= tokenized_end_token_pos
         else:
             tokenized_start_token_pos = tokenized_end_token_pos = -1
@@ -823,7 +873,8 @@ class CoQAExampleProcessor(object):
             p_mask = []
             doc_token2char_raw_start_index = []
             doc_token2char_raw_end_index = []
-            doc_token2doc_index = {}
+            doc_sis_tokens_index = []
+            doc_token2doc_index = {} #이 토큰이 몇번째 document에 속하는지??
             
             input_tokens.append(self.cls_token)
             
@@ -839,6 +890,7 @@ class CoQAExampleProcessor(object):
                 
                 doc_token2char_raw_start_index.append(token2char_raw_start_index[token_idx])
                 doc_token2char_raw_end_index.append(token2char_raw_end_index[token_idx])
+                doc_sis_tokens_index.append(sis_tokens_index[token_idx])
                 
                 best_doc_idx = self._find_max_context(doc_spans, token_idx)
                 doc_token2doc_index[len(doc_tokens)] = (best_doc_idx == doc_idx)
@@ -846,13 +898,22 @@ class CoQAExampleProcessor(object):
                 doc_tokens.append(para_tokens[token_idx])
                 input_tokens.append(para_tokens[token_idx])
             
-            para_end_index = len(input_tokens)
+            para_end_index = len(input_tokens)-1
                 
             input_tokens.append(self.sep_token)
             p_mask = [0] * len(input_tokens)
+            src_length = len(input_tokens)
+            
+            for _ in range(self.max_seq_length - len(input_tokens)):
+                input_tokens.append(self.pad_token)
+                p_mask.append(1)
+                
+            assert len(input_tokens)==self.max_seq_length
+            assert len(p_mask)==self.max_seq_length
+                
             
             doc_para_length = len(doc_tokens)
-            cls_index = 0 ########
+            cls_index = 0
             
             start_position = None
             end_position = None
@@ -872,24 +933,16 @@ class CoQAExampleProcessor(object):
             else:
                 option = 0
             
+            doc_start = doc_span["start"]
+            doc_end = doc_start + doc_span["length"] - 1
             if example.answer_type not in ["unknown", "yes", "no"] and not example.is_skipped and example.orig_answer_text:
-                doc_start = doc_span["start"]
-                doc_end = doc_start + doc_span["length"] - 1
-                if tokenized_start_token_pos >= doc_start and tokenized_end_token_pos <= doc_end:
-                    start_position = sis_tokens_index[tokenized_start_token_pos][0]
-                    end_position = sis_tokens_index[tokenized_end_token_pos][-1]
-                    
-                    start_position = start_position - doc_start + para_start_index
-                    end_position = end_position - doc_start + para_start_index
+                if tokenized_start_token_pos >= doc_start and tokenized_end_token_pos <= doc_end:                    
+                    start_position = tokenized_start_token_pos - doc_start + para_start_index #tokenized_start_token_pos : paragraph에서의 pos
+                    end_position = tokenized_end_token_pos - doc_start + para_start_index
                     
                     answer_tokens = input_tokens[start_position:end_position+1]
                     final_answer_text = self.bpe_encoder.decode_tokens(answer_tokens)
                     self.f.write("After split:"+final_answer_text+"\n\n")
-                    
-                    if example.orig_answer_text.strip() != final_answer_text.strip():
-                        print(example.orig_answer_text.strip())
-                        print(final_answer_text.strip())
-                    
                 else:
                     start_position = cls_index
                     end_position = cls_index
@@ -897,16 +950,18 @@ class CoQAExampleProcessor(object):
             else:
                 start_position = cls_index
                 end_position = cls_index
-                
                
             feature = InputFeatures(
                 unique_id=self.unique_id,
                 qas_id=example.qas_id,
                 doc_idx=doc_idx,
+                doc_start=doc_start,
+                sis_tokens_index=doc_sis_tokens_index,
                 token2char_raw_start_index=doc_token2char_raw_start_index,
                 token2char_raw_end_index=doc_token2char_raw_end_index,
                 token2doc_index=doc_token2doc_index,
                 input_tokens=input_tokens,
+                src_length=src_length,
                 para_start_index=para_start_index,
                 para_end_index=para_end_index,
                 p_mask=p_mask,
@@ -918,6 +973,7 @@ class CoQAExampleProcessor(object):
                 is_no=is_no,
                 number=number,
                 option=option)
+            
             
             feature_list.append(feature)
             self.unique_id += 1
