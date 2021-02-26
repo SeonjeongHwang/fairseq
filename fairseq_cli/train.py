@@ -382,6 +382,7 @@ def validate(
 
     trainer.begin_valid_epoch(epoch_itr.epoch)
     valid_losses = []
+    predictions = []
     for subset in subsets:
         logger.info('begin validation on "{}" subset'.format(subset))
 
@@ -417,8 +418,15 @@ def validate(
         # don't pollute other aggregators (e.g., train meters)
         with metrics.aggregate(new_root=True) as agg:
             for sample in progress:
-                trainer.valid_step(sample)
+                prediction, _ = trainer.valid_step(sample)
+                predictions.extend(prediction)
 
+        if trainer.is_data_parallel_master:
+            with open(cfg.criterion.save_predictions, "w") as f:
+                for prediction in predictions:
+                    f.write(prediction)
+                    f.write("\n")
+                
         # log validation stats
         stats = get_valid_stats(cfg, trainer, agg.get_smoothed_values())
         progress.print(stats, tag=subset, step=trainer.get_num_updates())

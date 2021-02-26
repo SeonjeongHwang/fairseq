@@ -788,7 +788,8 @@ class Trainer(object):
 
             xm.rendezvous("valid_step")  # wait for all workers
             xm.mark_step()
-
+            
+        prediction = None
         with torch.no_grad():
             self.model.eval()
             self.criterion.eval()
@@ -796,7 +797,7 @@ class Trainer(object):
             sample, is_dummy_batch = self._prepare_sample(sample)
 
             try:
-                _loss, sample_size, logging_output = self.task.valid_step(
+                _loss, prediction, sample_size, logging_output = self.task.valid_step(
                     sample, self.model, self.criterion
                 )
             except RuntimeError as e:
@@ -832,7 +833,7 @@ class Trainer(object):
         # log validation stats
         logging_output = self._reduce_and_log_stats(logging_outputs, sample_size)
 
-        return logging_output
+        return prediction, logging_output
 
     def zero_grad(self):
         self.optimizer.zero_grad()

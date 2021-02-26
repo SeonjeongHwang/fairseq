@@ -242,8 +242,16 @@ class CoqaCriterion(FairseqCriterion):
         else:
             loss = torch.tensor(0.0, requires_grad=True)
             targets = None
+            
+        logging_output = {
+            "loss": loss.data,
+            "ntokens": sample["ntokens"],
+            "nsentences": sample_size,
+            "sample_size": sample_size,
+        }
 
         if self.prediction_h is not None and not self.training:
+            predictions = []
             for i in range(sample["nsentences"]):
                 pred = {}
                 pred["unique_id"] = sample["id"].tolist()[i]
@@ -258,15 +266,10 @@ class CoqaCriterion(FairseqCriterion):
                 pred["num_probs"] = preds["num_probs"].tolist()[i]
                 pred["opt_probs"] = preds["opt_probs"].tolist()[i]
                 prediction = json.dumps(pred)
-                self.prediction_h.write(prediction)
-                self.prediction_h.write("\n")
-                
-        logging_output = {
-            "loss": loss.data,
-            "ntokens": sample["ntokens"],
-            "nsentences": sample_size,
-            "sample_size": sample_size,
-        }
+                predictions.append(prediction)
+                #self.prediction_h.write(prediction)
+                #self.prediction_h.write("\n")
+            return loss, predictions, sample_size, logging_output
 
         return loss, sample_size, logging_output
 
