@@ -199,6 +199,11 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
                     end_prob = example_result["end_prob"][i][j]
                     end_index = example_result["end_index"][i][j] #input_tokens 상에서의 prediction
                     
+                    answer_tokens_len = end_index - start_index + 1
+                    
+                    if answer_tokens_len > 50:
+                        continue
+                    
                     ##start 보다 end index의 값이 같거나 큰가?
                     if start_index > end_index:
                         continue
@@ -206,45 +211,12 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
                     ##input_tokens 상의 context 범위 내에 있는가?
                     if start_index < example_feature.para_start_index or end_index > example_feature.para_end_index:
                         continue
-                        
-                    """
-                    
-                    ##
-                    predict_tokens = example_feature.input_tokens[start_index:end_index+1]
-                    predict_text = 
-                    
-                    doc_start_token_idx = start_index - example_feature.para_start_index
-                    if doc_start_token_idx < 0: continue
-                    raw_start_token_idx = doc_start_token_idx + example_feature.doc_start
-                    doc_end_token_idx = end_index - example_feature.para_start_index
-                    if doc_end_token_idx < 0: continue
-                    raw_end_token_idx = doc_end_token_idx + example_feature.doc_start
-                    
-                    if raw_start_token_idx > raw_end_token_idx:
-                        continue
-                        
-                    if raw_end_token_idx >= len(example_feature.sis_tokens_index):
-                        continue
-                    
-                    raw_modified_start_token_idx = example_feature.sis_tokens_index[raw_start_token_idx][0]
-                    doc_start_index = raw_modified_start_token_idx - example_feature.doc_start
-                    raw_modified_end_token_idx = example_feature.sis_tokens_index[raw_end_token_idx][-1]
-                    doc_end_index = raw_modified_start_token_idx - example_feature.doc_start
-                    
-                    answer_length = end_index - start_index + 1
-                    if answer_length > args.task.max_answer_length:
-                        continue
-
-                    if doc_end_index >= len(example_feature.token2char_raw_start_index):
-                        continue
-                        
-                    if start_index not in example_feature.token2doc_index:
-                        continue
-                        
-                    """    
-
+                          
                     example_all_predicts.append({
                         "unique_id": example_result["unique_id"],
+                        "input_tokens": example_feature.input_tokens,
+                        "answer_start": int(example_feature.start_position),
+                        "answer_end": int(example_feature.end_position),
                         "start_prob": float(start_prob),
                         "start_index": int(start_index),
                         "end_prob": float(end_prob),
@@ -260,14 +232,8 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
             if len(example_top_predicts) >= args.criterion.n_best_size:
                 break
             
-            predict_tokens = example_feature.input_tokens[start_index:end_index+1]
+            predict_tokens = example_predict["input_tokens"][example_predict["start_index"]:example_predict["end_index"]+1]
             predict_text = bpe_encoder.decode_tokens(predict_tokens)
-            
-            """
-            predict_start = example_feature.token2char_raw_start_index[doc_start_index]
-            predict_end = example_feature.token2char_raw_end_index[doc_end_index]
-            predict_text = example.paragraph_text[predict_start:predict_end + 1].strip()
-            """
 
             if predict_text in is_visited:
                 continue
@@ -275,12 +241,20 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
             is_visited.add(predict_text)
 
             example_top_predicts.append({
+                "answer_start": example_predict["answer_start"],
+                "answer_end": example_predict["answer_end"],
+                "predict_start": example_predict["start_index"],
+                "predict_end": example_predict["end_index"],
                 "predict_text": predict_text,
                 "predict_score": example_predict["predict_score"]
             })
 
         if len(example_top_predicts) == 0:
             example_top_predicts.append({
+                "answer_start": 0,
+                "answer_end": 0,
+                "predict_start": 0,
+                "predict_end": 0,
                 "predict_text": "",
                 "predict_score": 0.0
             })
@@ -294,6 +268,11 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
             "qas_id": qas_id_map[str(example.qas_id)],
             "question_text": example_question_text,
             "label_text": example.orig_answer_text,
+            "answer_start": example_best_predict["answer_start"],
+            "answer_end": example_best_predict["answer_end"],
+            "predict_start": example_best_predict["predict_start"],
+            "predict_end": example_best_predict["predict_end"],
+            "predict_len": example_best_predict["predict_end"]-example_best_predict["predict_start"]+1,
             "unk_score": example_unk_score,
             "yes_score": example_yes_score,
             "no_score": example_no_score,
@@ -303,7 +282,6 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
             "opt_id": example_opt_id,
             "opt_score": example_opt_score,
             "opt_probs": example_opt_probs,
-            
             "predict_text": example_best_predict["predict_text"],
             "predict_score": example_best_predict["predict_score"]
         })

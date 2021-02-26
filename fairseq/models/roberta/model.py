@@ -422,11 +422,12 @@ class RobertaCoqaHead(nn.Module):
         self.end_activation_fnT = nn.Tanh()
         self.end_normT = nn.LayerNorm(hidden_dim)
         self.end_denseT_2 = nn.Linear(hidden_dim, 1)
-        
+        """
         self.end_denseE_1 = nn.Linear(hidden_dim*2, hidden_dim)
         self.end_activation_fnE = nn.Tanh()
         self.end_normE = nn.LayerNorm(hidden_dim)
         self.end_denseE_2 = nn.Linear(hidden_dim, 1)
+        """
         
         self.ans_dense = nn.Linear(hidden_dim*2, hidden_dim)
         self.ans_activation_fn = nn.Tanh()
@@ -438,7 +439,7 @@ class RobertaCoqaHead(nn.Module):
         
         self.num_dense = nn.Linear(hidden_dim, 12)
         self.opt_dense = nn.Linear(hidden_dim, 3)
-        
+
     def get_masked_data(self, data, mask):
         return data * mask + MIN_FLOAT * (1-mask)
     
@@ -482,8 +483,8 @@ class RobertaCoqaHead(nn.Module):
             end_result = self.end_normT(end_result)
             end_result = self.end_denseT_2(end_result)
         else:
-            start_index = F.one_hot(start_top_index, self.seq_len).half()
-            feat_result = torch.matmul(start_index, seq_result)
+            start_index = F.one_hot(start_top_index, self.seq_len).half() #[b,k] -> [b,k,l]
+            feat_result = torch.matmul(start_index, seq_result)           #[b,k,l]*[b,l,h] -> [b,k,h] 
             feat_result = torch.unsqueeze(feat_result, dim=1)
             feat_result = self.tile(feat_result, [1, self.seq_len, 1, 1])
             
@@ -491,11 +492,12 @@ class RobertaCoqaHead(nn.Module):
             end_result = self.tile(end_result, [1, 1, self.start_n_top, 1])
             end_result = torch.cat([end_result, feat_result], dim=-1)
             
-            end_result = self.end_denseE_1(end_result)
-            end_result = self.end_activation_fnE(end_result)
-            end_result = self.end_normE(end_result) #[b,l,k,h]
-            end_result = self.end_denseE_2(end_result)
-            
+            end_result = self.end_denseT_1(end_result)
+            end_result = self.end_activation_fnT(end_result)
+            end_result = self.end_normT(end_result)
+            end_result = self.end_denseT_2(end_result)
+
+
         ##answer
         answer_feat_result = torch.matmul(torch.unsqueeze(start_prob, dim=1).half(), seq_result) #[b,1,h]
         answer_output_result = torch.unsqueeze(cls_result, dim=1) #[b,1,h]
@@ -520,7 +522,7 @@ class RobertaCoqaHead(nn.Module):
                   "no_result": no_result,
                   "num_result": num_result,
                   "opt_result": opt_result}
-        
+
         return logits 
 
 class RobertaEncoder(FairseqEncoder): ################################

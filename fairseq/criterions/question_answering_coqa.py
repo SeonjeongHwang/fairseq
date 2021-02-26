@@ -134,7 +134,7 @@ class CoqaCriterion(FairseqCriterion):
             end_top_prob, end_top_index = torch.topk(end_prob, k=self.start_n_top)
             preds["end_prob"] = end_top_prob
             preds["end_index"] = end_top_index
-            
+        
         ##unk
         unk_result = logits["unk_result"]
         unk_result_mask = torch.max(1-p_mask, dim=-1).values
@@ -178,6 +178,7 @@ class CoqaCriterion(FairseqCriterion):
         opt_probs = F.softmax(opt_result, dim=-1)
         preds["opt_probs"] = opt_probs
         
+        
         if target_exist and self.training:
             start_label = sample["start_position"]
             start_loss = compute_loss(start_label, start_result, 1-p_mask) # [b],[b,l],[b,l]
@@ -215,7 +216,6 @@ class CoqaCriterion(FairseqCriterion):
             end_result = end_result[:,0,:]
             end_loss = compute_loss(end_label, end_result, 1-p_mask) # [b],[b,k,l],[b,l]
             loss = torch.mean(start_loss + end_loss)
-            
             unk_label = sample["is_unk"]
             unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
             loss += torch.mean(unk_loss)
@@ -248,7 +248,6 @@ class CoqaCriterion(FairseqCriterion):
                 pred = {}
                 pred["unique_id"] = sample["id"].tolist()[i]
                 pred["qas_id"] = sample["qas_id"].tolist()[i]
-                
                 pred["start_prob"] = preds["start_prob"].tolist()[i]
                 pred["start_index"] = preds["start_index"].tolist()[i]
                 pred["end_prob"] = preds["end_prob"].tolist()[i]
@@ -258,7 +257,6 @@ class CoqaCriterion(FairseqCriterion):
                 pred["no_prob"] = preds["no_prob"].tolist()[i]
                 pred["num_probs"] = preds["num_probs"].tolist()[i]
                 pred["opt_probs"] = preds["opt_probs"].tolist()[i]
-                
                 prediction = json.dumps(pred)
                 self.prediction_h.write(prediction)
                 self.prediction_h.write("\n")
