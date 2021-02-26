@@ -75,6 +75,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
     token2char_raw_end_index=doc_token2char_raw_end_index,
     token2doc_index=doc_token2doc_index,
     input_tokens=input_tokens,
+    rationale_tag=rationale_tag,
     para_start_index=para_start_index,
     para_end_index=para_end_index,
     p_mask=p_mask,
@@ -233,7 +234,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
                 break
             
             predict_tokens = example_predict["input_tokens"][example_predict["start_index"]:example_predict["end_index"]+1]
-            predict_text = bpe_encoder.decode_tokens(predict_tokens)
+            predict_text = bpe_encoder.decode_tokens(predict_tokens).strip()
 
             if predict_text in is_visited:
                 continue
@@ -356,6 +357,7 @@ class InputFeatures(object):
                  token2char_raw_end_index,
                  token2doc_index,
                  input_tokens,
+                 rationale_tag,
                  src_length,
                  para_start_index,
                  para_end_index,
@@ -377,6 +379,7 @@ class InputFeatures(object):
         self.token2char_raw_end_index = token2char_raw_end_index
         self.token2doc_index = token2doc_index
         self.input_tokens = input_tokens
+        self.rationale_tag = rationale_tag
         self.src_length = src_length
         self.para_start_index = para_start_index
         self.para_end_index = para_end_index
@@ -886,6 +889,8 @@ class CoQAExampleProcessor(object):
                 input_tokens.append(self.pad_token)
                 p_mask.append(1)
                 
+            rationale_tag = [0] * len(input_tokens)
+            
             assert len(input_tokens)==self.max_seq_length
             assert len(p_mask)==self.max_seq_length
                 
@@ -928,6 +933,9 @@ class CoQAExampleProcessor(object):
             else:
                 start_position = cls_index
                 end_position = cls_index
+                
+            for idx in range(start_position, end_position+1):
+                rationale_tag[idx] = 1
                
             feature = InputFeatures(
                 unique_id=self.unique_id,
@@ -939,6 +947,7 @@ class CoQAExampleProcessor(object):
                 token2char_raw_end_index=doc_token2char_raw_end_index,
                 token2doc_index=doc_token2doc_index,
                 input_tokens=input_tokens,
+                rationale_tag=rationale_tag,
                 src_length=src_length,
                 para_start_index=para_start_index,
                 para_end_index=para_end_index,

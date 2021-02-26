@@ -422,12 +422,10 @@ class RobertaCoqaHead(nn.Module):
         self.end_activation_fnT = nn.Tanh()
         self.end_normT = nn.LayerNorm(hidden_dim)
         self.end_denseT_2 = nn.Linear(hidden_dim, 1)
-        """
-        self.end_denseE_1 = nn.Linear(hidden_dim*2, hidden_dim)
-        self.end_activation_fnE = nn.Tanh()
-        self.end_normE = nn.LayerNorm(hidden_dim)
-        self.end_denseE_2 = nn.Linear(hidden_dim, 1)
-        """
+        
+        self.rat_dense = nn.Linear(hidden_dim, 1) #bias false...?
+        self.rat_activation_fn = nn.ReLU()
+        self.rat_param = nn.parameter.Parameter(torch.FloatTensor(self.seq_len).uniform_(1, 1))
         
         self.ans_dense = nn.Linear(hidden_dim*2, hidden_dim)
         self.ans_activation_fn = nn.Tanh()
@@ -497,7 +495,13 @@ class RobertaCoqaHead(nn.Module):
             end_result = self.end_normT(end_result)
             end_result = self.end_denseT_2(end_result)
 
-
+        ##rationale
+        rat_result = seq_result                          #[b,l,h]
+        rat_result = self.rat_dense(rat_result)          #[b,l,1]
+        rat_result = self.rat_activation_fn(rat_result)  #[b,l,1]
+        rat_result = torch.squeeze(rat_result, dim=-1)   #[b,l]
+        rat_result = self.rat_param * rat_result         #[b,l]
+            
         ##answer
         answer_feat_result = torch.matmul(torch.unsqueeze(start_prob, dim=1).half(), seq_result) #[b,1,h]
         answer_output_result = torch.unsqueeze(cls_result, dim=1) #[b,1,h]
@@ -517,6 +521,7 @@ class RobertaCoqaHead(nn.Module):
         
         logits = {"start_result": start_logit,
                   "end_result": end_result,
+                  "rat_result": rat_result,
                   "unk_result": unk_result,
                   "yes_result": yes_result,
                   "no_result": no_result,

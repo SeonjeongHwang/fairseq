@@ -57,6 +57,7 @@ class FairseqCriterion(_Loss):
                     "Unable to infer Criterion arguments, please implement "
                     "{}.build_criterion".format(cls.__name__)
                 )
+        init_args["beta1"] = cfg.beta1
         return cls(**init_args)
 
     def forward(self, model, sample, reduce=True):

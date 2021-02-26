@@ -17,7 +17,7 @@ MIN_FLOAT = -1e30
 
 @register_criterion("coqa")
 class CoqaCriterion(FairseqCriterion):
-    def __init__(self, task, ranking_head_name, save_predictions):
+    def __init__(self, task, beta1, ranking_head_name, save_predictions):
         super().__init__(task)
         self.ranking_head_name = ranking_head_name
         self.start_n_top = 5 ##################################
@@ -48,6 +48,9 @@ class CoqaCriterion(FairseqCriterion):
         parser.add_argument('--end-n-top',
                             default=5,
                             help='Beam size for span end')
+        parser.add_argument('--beta1',
+                            default=5,
+                            help='for weights of rationale loss')
         # fmt: on
         
     def get_masked_data(self, data, mask):
@@ -134,6 +137,14 @@ class CoqaCriterion(FairseqCriterion):
             end_top_prob, end_top_index = torch.topk(end_prob, k=self.start_n_top)
             preds["end_prob"] = end_top_prob
             preds["end_index"] = end_top_index
+            
+        ##rationale
+        rat_result = logits["rat_result"]
+        rat_result_mask = 1-p_mask
+        
+        rat_result = self.get_masked_data(rat_result, rat_result_mask)
+        rat_probs = F.sigmoid(rat_result)
+        preds["rat_probs"] = rat_probs
         
         ##unk
         unk_result = logits["unk_result"]

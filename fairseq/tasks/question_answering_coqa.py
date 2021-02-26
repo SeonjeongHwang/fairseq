@@ -121,6 +121,7 @@ class CoQATask(LegacyFairseqTask):
         
         qas_idx = []
         src_tokens = []
+        rat_tags = []
         src_lengths = []
         padding_mask = []
         start_pos = []
@@ -133,6 +134,7 @@ class CoQATask(LegacyFairseqTask):
         
         for feature in features:
             src = torch.IntTensor(feature.input_tokens).long()
+            rat = torch.IntTensor(feature.rationale_tag).long()
             p_mask = torch.IntTensor(feature.p_mask).long()
             
             src_tokens.append(src)
@@ -140,6 +142,7 @@ class CoQATask(LegacyFairseqTask):
             padding_mask.append(p_mask)
             qas_idx.append(feature.qas_id)
             
+            rat_tags.append(rat)
             start_pos.append(feature.start_position)
             end_pos.append(feature.end_position)
             is_unk.append(feature.is_unk)
@@ -149,6 +152,7 @@ class CoQATask(LegacyFairseqTask):
             option.append(feature.option)
         
         src_tokens = ListDataset(src_tokens, src_lengths)
+        rat_tags = ListDataset(rat_tags, src_lengths)
         src_lengths = ListDataset(src_lengths)
         
         dataset = {
@@ -166,6 +170,9 @@ class CoQATask(LegacyFairseqTask):
                         padding_mask,
                         pad_idx=self.dictionary.pad()),
             },
+            "rat_tags": RightPadDataset(
+                    rat_tags,
+                    pad_idx=self.dictionary.pad()),
             "start_position": RawLabelDataset(start_pos),
             "end_position": RawLabelDataset(end_pos),
             "is_unk": RawLabelDataset(is_unk),
