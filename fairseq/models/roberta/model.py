@@ -230,7 +230,8 @@ class RobertaModel(FairseqEncoderModel):
                 hidden_dim = self.args.encoder_embed_dim,
                 dropout = self.args.dropout,
                 seq_len = self.args.max_positions,
-                start_n_top = self.args.start_n_top)
+                start_n_top = self.args.start_n_top,
+                rationale = self.args.rationale)
         else:
             self.classification_heads[name] = RobertaClassificationHead(
                 input_dim=self.args.encoder_embed_dim,
@@ -410,11 +411,13 @@ class RobertaCoqaHead(nn.Module):
         hidden_dim,
         dropout,
         seq_len,
-        start_n_top):
+        start_n_top,
+        rationale):
         super().__init__()
         self.dropout = dropout
         self.seq_len = seq_len
         self.start_n_top = start_n_top
+        self.rationale = rationale
         
         self.start_dense = nn.Linear(hidden_dim, 1)
         
@@ -423,9 +426,10 @@ class RobertaCoqaHead(nn.Module):
         self.end_normT = nn.LayerNorm(hidden_dim)
         self.end_denseT_2 = nn.Linear(hidden_dim, 1)
         
-        self.rat_dense = nn.Linear(hidden_dim, 1) #bias false...?
-        self.rat_activation_fn = nn.ReLU()
-        self.rat_param = nn.parameter.Parameter(torch.FloatTensor(self.seq_len).uniform_(1, 1))
+        if self.rationale:
+            self.rat_dense = nn.Linear(hidden_dim, 1) #bias false...?
+            self.rat_activation_fn = nn.ReLU()
+            self.rat_param = nn.parameter.Parameter(torch.FloatTensor(self.seq_len).uniform_(1, 1))
         
         self.ans_dense = nn.Linear(hidden_dim*2, hidden_dim)
         self.ans_activation_fn = nn.Tanh()
@@ -495,12 +499,13 @@ class RobertaCoqaHead(nn.Module):
             end_result = self.end_normT(end_result)
             end_result = self.end_denseT_2(end_result)
 
-        ##rationale
-        rat_result = seq_result                          #[b,l,h]
-        rat_result = self.rat_dense(rat_result)          #[b,l,1]
-        rat_result = self.rat_activation_fn(rat_result)  #[b,l,1]
-        rat_result = torch.squeeze(rat_result, dim=-1)   #[b,l]
-        rat_result = self.rat_param * rat_result         #[b,l]
+        rat_result = None
+        if self.rationale:
+            rat_result = seq_result                          #[b,l,h]
+            rat_result = self.rat_dense(rat_result)          #[b,l,1]
+            rat_result = self.rat_activation_fn(rat_result)  #[b,l,1]
+            rat_result = torch.squeeze(rat_result, dim=-1)   #[b,l]
+            rat_result = self.rat_param * rat_result         #[b,l]
             
         ##answer
         answer_feat_result = torch.matmul(torch.unsqueeze(start_prob, dim=1).half(), seq_result) #[b,1,h]

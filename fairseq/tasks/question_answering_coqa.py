@@ -70,6 +70,7 @@ class CoQATask(LegacyFairseqTask):
         parser.add_argument(
             "--num-turns", type=int, help="number of history turns"
         )
+        parser.add_argument("--rationale", action="store_true")
         
     def __init__(self, args, dictionary):
         super().__init__(args)
@@ -170,9 +171,6 @@ class CoQATask(LegacyFairseqTask):
                         padding_mask,
                         pad_idx=self.dictionary.pad()),
             },
-            "rat_tags": RightPadDataset(
-                    rat_tags,
-                    pad_idx=self.dictionary.pad()),
             "start_position": RawLabelDataset(start_pos),
             "end_position": RawLabelDataset(end_pos),
             "is_unk": RawLabelDataset(is_unk),
@@ -181,6 +179,16 @@ class CoQATask(LegacyFairseqTask):
             "number": RawLabelDataset(number),
             "option": RawLabelDataset(option),     
         }
+        
+        if self.args.rationale:
+            dataset.update(
+                {
+                    "rat_tags": RightPadDataset(
+                        rat_tags,
+                        pad_idx=self.dictionary.pad()
+                    )
+                }
+            )
 
         dataset = NestedDictionaryDataset(
             dataset,

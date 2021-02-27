@@ -17,11 +17,13 @@ MIN_FLOAT = -1e30
 
 @register_criterion("coqa")
 class CoqaCriterion(FairseqCriterion):
-    def __init__(self, task, beta1, ranking_head_name, save_predictions):
+    def __init__(self, task, beta1, ranking_head_name, save_predictions, rationale):
         super().__init__(task)
         self.ranking_head_name = ranking_head_name
         self.start_n_top = 5 ##################################
         self.end_n_top = 5
+        self.beta1 = beta1
+        self.rationale = rationale
         if save_predictions is not None:
             self.prediction_h = True
         else:
@@ -139,13 +141,13 @@ class CoqaCriterion(FairseqCriterion):
             preds["end_prob"] = end_top_prob
             preds["end_index"] = end_top_index
             
-        ##rationale
-        rat_result = logits["rat_result"]
-        rat_result_mask = 1-p_mask
-        
-        rat_result = self.get_masked_data(rat_result, rat_result_mask)
-        rat_probs = F.sigmoid(rat_result)
-        preds["rat_probs"] = rat_probs
+        if self.rationale:
+            rat_result = logits["rat_result"]
+            rat_result_mask = 1-p_mask
+
+            rat_result = self.get_masked_data(rat_result, rat_result_mask)
+            rat_probs = F.sigmoid(rat_result)
+            preds["rat_probs"] = rat_probs
         
         ##unk
         unk_result = logits["unk_result"]
@@ -198,6 +200,16 @@ class CoqaCriterion(FairseqCriterion):
             end_loss = compute_loss(end_label, end_result, 1-p_mask) # [b], [b,l], [b,l]
             loss = torch.mean(start_loss + end_loss)
             
+            if self.rationale:
+                rat_label = sample["rat_tags"]
+                rat_masked_label = self.get_masked_data(rat_label, rat_result_mask)
+                rat_masked_result = self.get_masked_data(rat_result, rat_result_mask)
+                print(rat_masked_label[0])
+                print(rat_masked_result[0])
+                rat_loss = torch.mean(F.binary_cross_entropy_with_logits(rat_masked_result, rat_masked_label.half()))
+                print(rat_loss)
+                loss += self.beta1 * rat_loss
+            
             unk_label = sample["is_unk"]
             unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
             loss += torch.mean(unk_loss)
@@ -228,6 +240,14 @@ class CoqaCriterion(FairseqCriterion):
             end_result = end_result[:,0,:]
             end_loss = compute_loss(end_label, end_result, 1-p_mask) # [b],[b,k,l],[b,l]
             loss = torch.mean(start_loss + end_loss)
+            
+            if self.rationale:
+                rat_label = sample["rat_tags"]
+                rat_masked_label = self.get_masked_data(rat_label, rat_result_mask)
+                rat_masked_result = self.get_masked_data(rat_result, rat_result_mask)
+                rat_loss = F.binary_cross_entropy_with_logits(rat_masked_result, rat_masked_label.half())
+                loss += self.beta1 * torch.mean(rat_loss)
+            
             unk_label = sample["is_unk"]
             unk_loss = F.binary_cross_entropy_with_logits(unk_result, unk_label.half())
             loss += torch.mean(unk_loss)
