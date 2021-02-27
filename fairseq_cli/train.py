@@ -421,11 +421,17 @@ def validate(
                 prediction, _ = trainer.valid_step(sample)
                 predictions.extend(prediction)
 
+        with open(cfg.criterion.save_predictions+str(torch.cuda.current_device())+".txt", "w") as f:
+            for prediction in predictions:
+                f.write(prediction)
+                f.write("\n")
+                
         if trainer.is_data_parallel_master:
-            with open(cfg.criterion.save_predictions, "w") as f:
-                for prediction in predictions:
-                    f.write(prediction)
-                    f.write("\n")
+            with open(cfg.criterion.save_predictions+".txt", "w") as outf:
+                for i in range(torch.cuda.device_count()):
+                    with open(cfg.criterion.save_predictions+str(i)+".txt", "r") as inf:
+                        lines = inf.read()
+                        outf.write(lines)
                 
         # log validation stats
         stats = get_valid_stats(cfg, trainer, agg.get_smoothed_values())

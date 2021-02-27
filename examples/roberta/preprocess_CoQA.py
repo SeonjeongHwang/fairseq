@@ -124,7 +124,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
     
     prediction_file = args.task.save_predictions
     preds = []
-    with open(prediction_file, "r") as f:
+    with open(prediction_file+".txt", "r") as f:
         pred_lines = f.readlines()
         for line in pred_lines:
             preds.append(json.loads(line))

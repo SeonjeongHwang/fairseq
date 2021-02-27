@@ -23,13 +23,14 @@ class CoqaCriterion(FairseqCriterion):
         self.start_n_top = 5 ##################################
         self.end_n_top = 5
         if save_predictions is not None:
-            self.prediction_h = open(save_predictions, "w")
+            self.prediction_h = True
         else:
             self.prediction_h = None
 
     def __del__(self):
-        if self.prediction_h is not None:
-            self.prediction_h.close()
+        pass
+        #if self.prediction_h is not None:
+        #    self.prediction_h.close()
 
     @staticmethod
     def add_args(parser):
