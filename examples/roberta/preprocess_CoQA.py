@@ -123,7 +123,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
     
     prediction_file = args.task.save_predictions
     preds = []
-    with open(prediction_file, "r") as f:
+    with open(prediction_file+".txt", "r") as f:
         pred_lines = f.readlines()
         for line in pred_lines:
             preds.append(json.loads(line))
@@ -144,6 +144,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
     predict_summary_list = []
     predict_detail_list = []
     num_example = len(examples)
+    no_result = 0
     for (example_idx, example) in enumerate(examples):
         if example_idx % 1000 == 0:
             logger.info('Updating {0}/{1} example with predict'.format(example_idx, num_example))
@@ -167,6 +168,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
         for example_feature in example_features:
             if example_feature.unique_id not in unique_id_to_result:
                 logger.info('No result found for feature: {0}'.format(example_feature.unique_id))
+                no_result += 1
                 continue
 
             example_result = unique_id_to_result[example_feature.unique_id]
@@ -225,7 +227,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
                     })
                     
         example_all_predicts = sorted(example_all_predicts, key=lambda x: x["predict_score"], reverse=True)
-
+        
         is_visited = set()
         example_top_predicts = []
         for example_predict in example_all_predicts:
@@ -233,7 +235,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
                 break
             
             predict_tokens = example_predict["input_tokens"][example_predict["start_index"]:example_predict["end_index"]+1]
-            predict_text = bpe_encoder.decode_tokens(predict_tokens)
+            predict_text = bpe_encoder.decode_tokens(predict_tokens).strip()
 
             if predict_text in is_visited:
                 continue
@@ -302,7 +304,7 @@ def get_best_predictions(args, examples, features, bpe_encoder, mode="train"):
             "best_predict": example_best_predict,
             "top_predicts": example_top_predicts
         })
-        
+    print("No result number:", no_result, "\n")
     write_to_json(predict_summary_list, output_summary)
     write_to_json(predict_detail_list, output_detail)       
         
@@ -951,7 +953,6 @@ class CoQAExampleProcessor(object):
                 is_no=is_no,
                 number=number,
                 option=option)
-            
             
             feature_list.append(feature)
             self.unique_id += 1
